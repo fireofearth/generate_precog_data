@@ -145,7 +145,18 @@ class StreamingGenerator(object):
 
     def save_dataset_sample(self, frame, observation,
             trajectory_feeds, lidar_feeds, player_bbox,
-            lidar_sensor, lidar_params):
+            lidar_sensor, lidar_params, save_directory,
+            make_sample_name):
+        """
+        player_bbox : carla.BoundingBox
+        lidar_sensor : carla.Sensor
+        lidar_params : LidarParams
+            Lidar parameters
+        save_directory : str
+            Directory to save to.
+        make_sample_name : lambda frame
+            Function to generate name for ssample
+        """
         earlier_frame = frame - self.T
         datum = {}
         player_transform, other_id_ordering, \
@@ -173,5 +184,6 @@ class StreamingGenerator(object):
         datum['overhead_features'] = overhead_features
         datum['player_future'] = player_future
         datum['agent_futures'] = agent_futures
-        util.save_datum(datum, "out", "{:08d}".format(earlier_frame))
+        util.save_datum(datum, save_directory,
+                make_sample_name(earlier_frame))
         

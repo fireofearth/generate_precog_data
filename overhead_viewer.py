@@ -436,7 +436,7 @@ class MapImage(object):
 
         self.width = max(max_x - min_x, max_y - min_y)
         self._world_offset = (min_x, min_y)
-        self._label_font = pygame.font.SysFont('Arial', 14, True)
+        self._label_font = pygame.font.SysFont('Arial', 28, True)
 
         # Maximum size of a Pygame surface
         width_in_pixels = (1 << 14) - 1

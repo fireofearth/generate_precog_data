@@ -1,5 +1,6 @@
 import collections
 import weakref
+import logging
 import attrdict
 import tensorflow as tf
 import carla
@@ -10,7 +11,7 @@ import generate.util as util
 import precog.utils.class_util as classu
 import precog.utils.tensor_util as tensoru
 
-class LidarParams:
+class LidarParams(object):
     @classu.member_initialize
     def __init__(self, meters_max=50, pixels_per_meter=2, hist_max_per_pixel=25, val_obstacle=1.):
         pass
@@ -83,7 +84,9 @@ def create_lidar_blueprint_v2(world):
 class DataCollector(object):
     """Data collector based on DIM."""
 
-    def __init__(self, player_actor):
+    def __init__(self, player_actor,
+            save_frequency = 10,
+            save_directory='out'):
         self.lidar_params = LidarParams()
         s = attrdict.AttrDict({
             "T": 20, "T_past": 10, "B": 1, "A": 5,
@@ -93,6 +96,9 @@ class DataCollector(object):
         self.B, self.A, self.T, self.D = tensoru.shape(self._phi.S_future_world_frame)
         self.B, self.H, self.W, self.C = tensoru.shape(self._phi.overhead_features)
         self._player = player_actor
+        self._save_directory = save_directory
+        self._make_sample_name = lambda frame : "agent{:03d}_frame{:08d}".format(
+                self._player.id, frame)
         self._world = self._player.get_world()
         self._other_vehicles = list()
         self._trajectory_size = self.T_past + 10
@@ -105,8 +111,8 @@ class DataCollector(object):
                 maxlen=self._trajectory_size)
         self.trajectory_feeds = collections.OrderedDict()
         self.lidar_feeds = collections.OrderedDict()
-        self.n_feeds = self.T + self.T_past + 10
-        self.save_frequency = 10
+        self._n_feeds = self.T + self.T_past + 10
+        self.save_frequency = save_frequency
         self.streaming_generator = generate_observation.StreamingGenerator(
                 self._phi)
         self.sensor = self._world.spawn_actor(
@@ -114,7 +120,6 @@ class DataCollector(object):
                 carla.Transform(carla.Location(z=2.5)),
                 attach_to=self._player,
                 attachment_type=carla.AttachmentType.Rigid)
-        self.counter = 0
     
     def start_sensor(self):
         # We need to pass the lambda a weak reference to
@@ -125,9 +130,18 @@ class DataCollector(object):
     def stop_sensor(self):
         self.sensor.stop()
 
+    def destroy(self):
+        self.sensor.destroy()
+        self.sensor = None
+    
+    def get_player(self):
+        return self._player
+
     def set_vehicles(self, vehicle_ids):
-        """Given a list of non-player vehicle IDs retreive the vehicles corr. those IDs.
+        """Given a list of non-player vehicle IDs retreive the vehicles corr.
+        those IDs to watch.
         Used at the start of data collection.
+        Do not add the player vehicle ID in the list!
         """
         self._other_vehicles = self._world.get_actors(vehicle_ids)
 
@@ -151,7 +165,7 @@ class DataCollector(object):
         return False
 
     def capture_step(self, frame):
-        print("in LidarManager.capture_step frame =", frame)
+        logging.debug(f"in LidarManager.capture_step() player = {self._player.id} frame = {frame}")
         self._update_transforms()
         if len(self.player_transforms) >= self.T_past:
             """Only save trajectory feeds when we have collected at
@@ -162,20 +176,18 @@ class DataCollector(object):
             self.streaming_generator.add_feed(
                         frame, observation, self.trajectory_feeds)
             
-            # save dataset sample if needed
             if self._should_save_dataset_sample(frame):
+                """Save dataset sample if needed."""
+                logging.debug(f"saving sample. player = {self._player.id} frame = {frame}")
                 self.streaming_generator.save_dataset_sample(
                         frame, observation, self.trajectory_feeds,
                         self.lidar_feeds, self._player.bounding_box,
-                        self.sensor, self.lidar_params)
-                # debug
-                self.counter += 1
-                if self.counter >= 15:
-                    raise Exception("DEBUG")
+                        self.sensor, self.lidar_params,
+                        self._save_directory, self._make_sample_name)
         
-        # remove older frames
-        if len(self.trajectory_feeds) > self.n_feeds:
-            # remove a (frame, feed) in LIFO order
+        if len(self.trajectory_feeds) > self._n_feeds:
+            """Remove older frames.
+            (frame, feed) is removed in LIFO order."""
             frame, feed = self.trajectory_feeds.popitem(last=False)
             self.lidar_feeds.pop(frame)
 
@@ -184,5 +196,5 @@ class DataCollector(object):
         self = weak_self()
         if not self:
             return
-        print("in LidarManager._parse_image frame =", image.frame)
+        logging.debug(f"in LidarManager._parse_image() player = {self._player.id} frame = {image.frame}")
         self.lidar_feeds[image.frame] = image
