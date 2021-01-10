@@ -823,8 +823,10 @@ class MapImage(object):
 
             is_controlled_junction = (tlight_distances < 25).any(axis=0)
             is_uncontrolled_junction = np.logical_not(is_controlled_junction)
-            controlled_junctions = util.compress_to_list(junctions, is_controlled_junction)
-            uncontrolled_junctions = util.compress_to_list(junctions, is_uncontrolled_junction)
+            controlled_junctions = util.compress_to_list(
+                    junctions, is_controlled_junction)
+            uncontrolled_junctions = util.compress_to_list(
+                    junctions, is_uncontrolled_junction)
 
             for junction in controlled_junctions:
                 pt = junction.bounding_box.location
@@ -834,6 +836,23 @@ class MapImage(object):
                 pt = junction.bounding_box.location
                 draw_circle(map_surface, pt, world_to_pixel_width(25), color=COLOR_CHAMELEON_0)
                 draw_point(map_surface, pt, color=COLOR_CHAMELEON_0)
+            
+            # test selecting location ndarrays
+            # controlled_junction_locations \
+            #         = junction_locations[is_controlled_junction]
+            # uncontrolled_junction_locations \
+            #         = junction_locations[is_uncontrolled_junction]
+
+            # for loc in controlled_junction_locations:
+            #     pt = carla.Location(loc[0], loc[1], loc[2])
+            #     draw_circle(map_surface, pt, world_to_pixel_width(25),
+            #             color=COLOR_SCARLET_RED_0)
+            #     draw_point(map_surface, pt, color=COLOR_SCARLET_RED_0)
+            # for loc in uncontrolled_junction_locations:
+            #     pt = carla.Location(loc[0], loc[1], loc[2])
+            #     draw_circle(map_surface, pt, world_to_pixel_width(25),
+            #             color=COLOR_CHAMELEON_0)
+            #     draw_point(map_surface, pt, color=COLOR_CHAMELEON_0)
 
         topology = carla_map.get_topology()
         draw_topology(topology, 0)

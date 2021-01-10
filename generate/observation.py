@@ -146,8 +146,22 @@ class StreamingGenerator(object):
     def save_dataset_sample(self, frame, observation,
             trajectory_feeds, lidar_feeds, player_bbox,
             lidar_sensor, lidar_params, save_directory,
-            make_sample_name):
+            make_sample_name, sample_labels):
         """
+
+        The original PRECOG dataset has these relevant keys:
+        - episode : int
+        - frame : int
+        - lidar_params : dict with keys ['hist_max_per_pixel',
+            'val_obstacle', 'meters_max', 'pixels_per_meter']
+        - player_future : matrix of shape (20, 3)
+        - agent_futures : matrix of shape (4, 20, 3)
+        - player_past : matrix of shape (10, 3)
+        - agent_pasts : matrix of shape (4, 10, 3)
+        - overhead_features : matrix shape (200, 200, 4)
+
+        Parameters
+        ----------
         player_bbox : carla.BoundingBox
         lidar_sensor : carla.Sensor
         lidar_params : LidarParams
@@ -155,7 +169,8 @@ class StreamingGenerator(object):
         save_directory : str
             Directory to save to.
         make_sample_name : lambda frame
-            Function to generate name for ssample
+            Function to generate name for sample
+        sample_label : dict
         """
         earlier_frame = frame - self.T
         datum = {}
@@ -179,11 +194,15 @@ class StreamingGenerator(object):
                 - util.transform_to_location_ndarray(player_transform)
         agent_futures = agent_futures[:, :, :2]
 
+        # datum['episode'] = episode
+        datum['episode'] = 0
+        datum['frame'] = frame
+        datum['lidar_params'] = vars(lidar_params)
         datum['player_past'] = player_past
         datum['agent_pasts'] = agent_pasts
         datum['overhead_features'] = overhead_features
         datum['player_future'] = player_future
         datum['agent_futures'] = agent_futures
+        datum['labels'] = sample_labels
         util.save_datum(datum, save_directory,
                 make_sample_name(earlier_frame))
-        

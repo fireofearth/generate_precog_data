@@ -75,7 +75,7 @@ SetVehicleLightState = carla.command.SetVehicleLightState
 FutureActor = carla.command.FutureActor
 
 import generate.util as util
-from generate.data import DataCollector
+from generate.data import DataCollector, IntersectionReader
 
 # ==============================================================================
 # -- Global functions ----------------------------------------------------------
@@ -708,173 +708,159 @@ class CameraManager(object):
 # -- Game Loop ---------------------------------------------------------
 # ==============================================================================
 
-def setup_players(client, args):
-    """
-    Parameters
-    ----------
-    client : carla.Client
-    args : argparse.Namespace
+class DataGenerator(object):
 
-    Returns
-    -------
-    list of int
-        IDs of 4 wheeled vehicles on autopilot.
-    list of DataCollector
-        Data collectors with set up done and listening to LIDAR.
-    """
-    vehicle_ids = []
-    data_collectors = []
-    world = client.get_world()
-    traffic_manager = client.get_trafficmanager(8000)
-
-    blueprints = world.get_blueprint_library().filter('vehicle.*')
-    blueprints = [x for x in blueprints if int(x.get_attribute('number_of_wheels')) == 4]
-    # if args.safe:
-    #     blueprints = [x for x in blueprints if not x.id.endswith('isetta')]
-    #     blueprints = [x for x in blueprints if not x.id.endswith('carlacola')]
-    #     blueprints = [x for x in blueprints if not x.id.endswith('cybertruck')]
-    #     blueprints = [x for x in blueprints if not x.id.endswith('t2')]
-    blueprints = sorted(blueprints, key=lambda bp: bp.id)
-
-    spawn_points = world.get_map().get_spawn_points()
-    number_of_spawn_points = len(spawn_points)
-
-    if args.number_of_vehicles < number_of_spawn_points:
-        np.random.shuffle(spawn_points)
-    elif args.number_of_vehicles > number_of_spawn_points:
-        msg = 'requested %d vehicles, but could only find %d spawn points'
-        logging.warning(msg, args.number_of_vehicles, number_of_spawn_points)
-        args.number_of_vehicles = number_of_spawn_points
-
-    # Generate vehicles
-    batch = []
-    for n, transform in enumerate(spawn_points):
-        if n >= args.number_of_vehicles:
-            break
-        blueprint = np.random.choice(blueprints)
-        if blueprint.has_attribute('color'):
-            color = np.random.choice(blueprint.get_attribute('color').recommended_values)
-            blueprint.set_attribute('color', color)
-        if blueprint.has_attribute('driver_id'):
-            driver_id = np.random.choice(blueprint.get_attribute('driver_id').recommended_values)
-            blueprint.set_attribute('driver_id', driver_id)
-        blueprint.set_attribute('role_name', 'autopilot')
-
-        # prepare the light state of the cars to spawn
-        light_state = vls.NONE
-        if args.car_lights_on:
-            light_state = vls.Position | vls.LowBeam | vls.LowBeam
-
-        # spawn the cars and set their autopilot and light state all together
-        batch.append(SpawnActor(blueprint, transform)
-            .then(SetAutopilot(FutureActor, True, traffic_manager.get_port()))
-            .then(SetVehicleLightState(FutureActor, light_state)))
-
-    # Wait for vehicles to finish generating
-    for response in client.apply_batch_sync(batch, True):
-        if response.error:
-            logging.error(response.error)
+    def __init__(self, args):
+        self.args = args
+        # n_frames : int
+        #     Number of frames to collect data in each episode.
+        self.n_frames = 10 * 12
+        # delta : float
+        #     Step size for synchronous mode.
+        self.delta = 0.1
+        if self.args.seed is None:
+            np.random.seed(int(time.time()))
         else:
-            vehicle_ids.append(response.actor_id)
-    
-    # Add data collector to a handful of vehicles
-    vehicles_ids_to_data_collect = vehicle_ids[:5]
-    for idx, vehicle_id in enumerate(vehicles_ids_to_data_collect):
-        vehicle_ids_to_watch = vehicle_ids[:idx] + vehicle_ids[idx + 1:]
-        vehicle = world.get_actor(vehicle_id)
-        data_collector = DataCollector(vehicle)
-        data_collector.start_sensor()
-        data_collector.set_vehicles(vehicle_ids_to_watch)
-        data_collectors.append(data_collector)
+            np.random.seed(self.args.seed)
 
-    logging.info(f"spawned {len(vehicle_ids)} vehicles")
+        # self.
+        self.client = carla.Client(self.args.host, self.args.port)
+        self.client.set_timeout(4.0)
+        self.world = self.client.get_world()
+        self.carla_map = self.world.get_map()
+        self.traffic_manager = self.client.get_trafficmanager(8000)        
+        self.intersection_reader = IntersectionReader(
+                self.world, self.carla_map)
 
-    return vehicle_ids, data_collectors
+    def setup_players(self):
+        """
+        Parameters
+        ----------
+        client : carla.Client
+        carla_map : carla.Map
+        args : argparse.Namespace
 
+        Returns
+        -------
+        list of int
+            IDs of 4 wheeled vehicles on autopilot.
+        list of DataCollector
+            Data collectors with set up done and listening to LIDAR.
+        """
+        vehicle_ids = []
+        data_collectors = []
 
-def game_loop(args):
-    """ Main loop for agent"""
+        blueprints = self.world.get_blueprint_library().filter('vehicle.*')
+        blueprints = [x for x in blueprints if int(x.get_attribute('number_of_wheels')) == 4]
+        # if args.safe:
+        #     blueprints = [x for x in blueprints if not x.id.endswith('isetta')]
+        #     blueprints = [x for x in blueprints if not x.id.endswith('carlacola')]
+        #     blueprints = [x for x in blueprints if not x.id.endswith('cybertruck')]
+        #     blueprints = [x for x in blueprints if not x.id.endswith('t2')]
+        blueprints = sorted(blueprints, key=lambda bp: bp.id)
 
-    # pygame.init()
-    # pygame.font.init()
-    vehicle_ids = []
-    data_collectors = []
-    world = None
-    original_settings = None
-    # delta : float
-    #     Synchronous timestep
-    delta = 0.1
-    np.random.seed(args.seed if args.seed is not None else int(time.time()))
+        spawn_points = self.carla_map.get_spawn_points()
+        number_of_spawn_points = len(spawn_points)
 
-    try:
-        client = carla.Client(args.host, args.port)
-        client.set_timeout(4.0)
+        if self.args.number_of_vehicles < number_of_spawn_points:
+            np.random.shuffle(spawn_points)
+        elif self.args.number_of_vehicles > number_of_spawn_points:
+            msg = 'requested %d vehicles, but could only find %d spawn points'
+            logging.warning(msg, self.args.number_of_vehicles, number_of_spawn_points)
+            self.args.number_of_vehicles = number_of_spawn_points
 
-        # display = pygame.display.set_mode(
-        #     (args.width, args.height),
-        #     pygame.HWSURFACE | pygame.DOUBLEBUF)
+        # Generate vehicles
+        batch = []
+        for n, transform in enumerate(spawn_points):
+            if n >= self.args.number_of_vehicles:
+                break
+            blueprint = np.random.choice(blueprints)
+            if blueprint.has_attribute('color'):
+                color = np.random.choice(blueprint.get_attribute('color').recommended_values)
+                blueprint.set_attribute('color', color)
+            if blueprint.has_attribute('driver_id'):
+                driver_id = np.random.choice(blueprint.get_attribute('driver_id').recommended_values)
+                blueprint.set_attribute('driver_id', driver_id)
+            blueprint.set_attribute('role_name', 'autopilot')
 
-        # hud = HUD(args.width, args.height)
-        # world = World(client.get_world(), hud, args)
-        # clock = pygame.time.Clock()
+            # prepare the light state of the cars to spawn
+            light_state = vls.NONE
+            if self.args.car_lights_on:
+                light_state = vls.Position | vls.LowBeam | vls.LowBeam
 
-        world = client.get_world()
+            # spawn the cars and set their autopilot and light state all together
+            batch.append(SpawnActor(blueprint, transform)
+                .then(SetAutopilot(FutureActor, True, self.traffic_manager.get_port()))
+                .then(SetVehicleLightState(FutureActor, light_state)))
+
+        # Wait for vehicles to finish generating
+        for response in self.client.apply_batch_sync(batch, True):
+            if response.error:
+                logging.error(response.error)
+            else:
+                vehicle_ids.append(response.actor_id)
         
-        logging.info("Turning on synchronous setting and updating traffic manager.")
-        original_settings = world.get_settings()
-        settings = world.get_settings()
-        settings.fixed_delta_seconds = delta
-        settings.synchronous_mode = True
+        # Add data collector to a handful of vehicles
+        vehicles_ids_to_data_collect = vehicle_ids[
+                :self.args.number_of_data_collectors]
+        for idx, vehicle_id in enumerate(vehicles_ids_to_data_collect):
+            vehicle_ids_to_watch = vehicle_ids[:idx] + vehicle_ids[idx + 1:]
+            vehicle = self.world.get_actor(vehicle_id)
+            data_collector = DataCollector(vehicle,
+                    intersection_reader=self.intersection_reader)
+            data_collector.start_sensor()
+            data_collector.set_vehicles(vehicle_ids_to_watch)
+            data_collectors.append(data_collector)
 
-        traffic_manager = client.get_trafficmanager(8000)
-        traffic_manager.set_synchronous_mode(True)
-        traffic_manager.set_global_distance_to_leading_vehicle(1.0)
-        traffic_manager.global_percentage_speed_difference(30.0)
-        if args.seed:
-            traffic_manager.set_random_device_seed(args.seed)        
-        if args.hybrid:
-            traffic_manager.set_hybrid_physics_mode(True)
-        world.apply_settings(settings)
+        logging.info(f"spawned {len(vehicle_ids)} vehicles")
+        return vehicle_ids, data_collectors
 
-        logging.info("Create vehicles and data collectors.")
-        vehicle_ids, data_collectors = setup_players(client, args)
-        data_collector = data_collectors[0]
+    def run(self):
+        """ Main loop for agent"""
+        vehicle_ids = []
+        data_collectors = []
+        world = None
+        original_settings = None
 
-        # controller = KeyboardControl(world)
+        try:
+            logging.info("Turning on synchronous setting and updating traffic manager.")
+            original_settings = self.world.get_settings()
+            settings = self.world.get_settings()
+            settings.fixed_delta_seconds = self.delta
+            settings.synchronous_mode = True
 
-        logging.info("Running simulation.")
-        n_loops = 10 * 12
-        for idx in range(n_loops):
-            # clock.tick_busy_loop(int(delta * 1000))
-            frame = world.tick()
-            for data_collector in data_collectors:
-                data_collector.capture_step(frame)
+            self.traffic_manager.set_synchronous_mode(True)
+            self.traffic_manager.set_global_distance_to_leading_vehicle(1.0)
+            self.traffic_manager.global_percentage_speed_difference(0.0)
+            if self.args.seed is not None:
+                self.traffic_manager.set_random_device_seed(self.args.seed)        
+            if self.args.hybrid:
+                self.traffic_manager.set_hybrid_physics_mode(True)
+            self.world.apply_settings(settings)
 
-            # hud.on_world_tick(
-            #     world.world.get_snapshot().timestamp)
-            # if controller.parse_events(client, world, clock):
-            #     return
+            logging.info("Create vehicles and data collectors.")
+            vehicle_ids, data_collectors = self.setup_players()
+            data_collector = data_collectors[0]
+            logging.info("Running simulation.")
+            for idx in range(self.n_frames):
+                frame = self.world.tick()
+                for data_collector in data_collectors:
+                    data_collector.capture_step(frame)
 
-            # world.tick(clock)
-            # world.render(display)
-            # pygame.display.flip()
+        finally:
+            logging.info("Destroying data collectors.")
+            if data_collectors:
+                for data_collector in data_collectors:
+                    data_collector.destroy()
+            
+            logging.info("Destroying vehicles.")
+            if vehicle_ids:
+                self.client.apply_batch(
+                        [carla.command.DestroyActor(x) for x in vehicle_ids])
 
-    finally:
-        logging.info("Destroying data collectors.")
-        if data_collectors:
-            for data_collector in data_collectors:
-                data_collector.destroy()
-        
-        logging.info("Destroying vehicles.")
-        if vehicle_ids:
-            client.apply_batch(
-                    [carla.command.DestroyActor(x) for x in vehicle_ids])
-
-        logging.info("Reverting to original settings.")
-        if original_settings:
-            world.apply_settings(original_settings)
-
-        # pygame.quit()
+            logging.info("Reverting to original settings.")
+            if original_settings:
+                self.world.apply_settings(original_settings)
 
 
 # ==============================================================================
@@ -929,7 +915,13 @@ def main():
         metavar='N',
         default=80,
         type=int,
-        help='number of vehicles (default: 10)')
+        help='number of vehicles (default: 80)')
+    argparser.add_argument(
+        '-d', '--number-of-data-collectors',
+        metavar='D',
+        default=5,
+        type=int,
+        help='number of data collectos to add on vehicles (default: 20)')
     argparser.add_argument(
         '--safe',
         action='store_true',
@@ -950,18 +942,14 @@ def main():
         help='Enanble car lights')
 
     args = argparser.parse_args()
-
-    # args.width, args.height = [int(x) for x in args.res.split('x')]
-
     log_level = logging.DEBUG if args.debug else logging.INFO
     logging.basicConfig(format='%(levelname)s: %(message)s', level=log_level)
-
     logging.info('listening to server %s:%s', args.host, args.port)
-
     print(__doc__)
 
     try:
-        game_loop(args)
+        generator = DataGenerator(args)
+        generator.run()
 
     except KeyboardInterrupt:
         print('\nCancelled by user. Bye!')

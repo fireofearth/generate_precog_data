@@ -62,6 +62,14 @@ def location_to_ndarray(l):
     """Converts carla.Location to ndarray [x, y, z]"""
     return np.array([l.x, l.y, l.z])
 
+def actor_to_location_ndarray(a):
+    """Converts carla.Actor's location ndarray [x, y, z]"""
+    return location_to_ndarray(a.get_location())
+
+def actors_to_location_ndarray(alist):
+    """Converts iterable of carla.Actor to a ndarray of size (len(iterable), 3)"""
+    return np.array(map_to_list(actor_to_location_ndarray, alist))
+
 def transform_to_location_ndarray(t):
     """Converts carla.Transform to location ndarray [x, y, z]"""
     return location_to_ndarray(t.location)
@@ -130,5 +138,3 @@ def get_junctions_from_topology_graph(topology):
     junctions = map(lambda v: v.get_junction(),
         filter(lambda v: v.is_junction, topology.nodes))
     return list({j.id: j for j in junctions}.values())
-
-
