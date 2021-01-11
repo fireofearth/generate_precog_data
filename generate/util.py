@@ -62,6 +62,10 @@ def location_to_ndarray(l):
     """Converts carla.Location to ndarray [x, y, z]"""
     return np.array([l.x, l.y, l.z])
 
+def ndarray_to_location(v):
+    """ndarray of form [x, y, z] to carla.Location."""
+    return carla.Location(x=v[0], y=v[1], z=v[2])
+
 def actor_to_location_ndarray(a):
     """Converts carla.Actor's location ndarray [x, y, z]"""
     return location_to_ndarray(a.get_location())

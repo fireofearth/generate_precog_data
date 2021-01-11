@@ -808,31 +808,34 @@ class MapImage(object):
             uncontrolled_junctions = util.compress_to_list(
                     junctions, is_uncontrolled_junction)
 
-            for junction in controlled_junctions:
-                pt = junction.bounding_box.location
-                draw_circle(map_surface, pt, world_to_pixel_width(25), color=COLOR_SCARLET_RED_0)
-                draw_point(map_surface, pt, color=COLOR_SCARLET_RED_0)
-            for junction in uncontrolled_junctions:
-                pt = junction.bounding_box.location
-                draw_circle(map_surface, pt, world_to_pixel_width(25), color=COLOR_CHAMELEON_0)
-                draw_point(map_surface, pt, color=COLOR_CHAMELEON_0)
+            # for junction in controlled_junctions:
+            #     pt = junction.bounding_box.location
+            #     draw_circle(map_surface, pt, world_to_pixel_width(35), color=COLOR_SCARLET_RED_0)
+            #     draw_point(map_surface, pt, color=COLOR_SCARLET_RED_0)
+            # for junction in uncontrolled_junctions:
+            #     pt = junction.bounding_box.location
+            #     draw_circle(map_surface, pt, world_to_pixel_width(35), color=COLOR_CHAMELEON_0)
+            #     draw_point(map_surface, pt, color=COLOR_CHAMELEON_0)
             
             # test selecting location ndarrays
-            # controlled_junction_locations \
-            #         = junction_locations[is_controlled_junction]
-            # uncontrolled_junction_locations \
-            #         = junction_locations[is_uncontrolled_junction]
+            controlled_junction_locations \
+                    = junction_locations[is_controlled_junction]
+            uncontrolled_junction_locations \
+                    = junction_locations[is_uncontrolled_junction]
 
-            # for loc in controlled_junction_locations:
-            #     pt = carla.Location(loc[0], loc[1], loc[2])
-            #     draw_circle(map_surface, pt, world_to_pixel_width(25),
-            #             color=COLOR_SCARLET_RED_0)
-            #     draw_point(map_surface, pt, color=COLOR_SCARLET_RED_0)
-            # for loc in uncontrolled_junction_locations:
-            #     pt = carla.Location(loc[0], loc[1], loc[2])
-            #     draw_circle(map_surface, pt, world_to_pixel_width(25),
-            #             color=COLOR_CHAMELEON_0)
-            #     draw_point(map_surface, pt, color=COLOR_CHAMELEON_0)
+            DETECT_RADIUS = 30
+            for loc in controlled_junction_locations:
+                pt = carla.Location(loc[0], loc[1], loc[2])
+                draw_circle(map_surface, pt,
+                        world_to_pixel_width(DETECT_RADIUS),
+                        color=COLOR_SCARLET_RED_0)
+                draw_point(map_surface, pt, color=COLOR_SCARLET_RED_0)
+            for loc in uncontrolled_junction_locations:
+                pt = carla.Location(loc[0], loc[1], loc[2])
+                draw_circle(map_surface, pt,
+                        world_to_pixel_width(DETECT_RADIUS),
+                        color=COLOR_CHAMELEON_0)
+                draw_point(map_surface, pt, color=COLOR_CHAMELEON_0)
 
         topology = carla_map.get_topology()
         draw_topology(topology, 0)

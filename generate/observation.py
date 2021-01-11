@@ -108,7 +108,13 @@ class PlayerObservation(object):
 class StreamingGenerator(object):
 
     @classu.member_initialize
-    def __init__(self, phi):
+    def __init__(self, phi, should_augment=False):
+        """
+        Parameters
+        ----------
+        phi : ESPPhiData
+        should_augment : bool
+        """
         _, _, self.T_past, _ = tensoru.shape(self.phi.S_past_world_frame)
         self.B, self.A, self.T, self.D = tensoru.shape(self.phi.S_future_world_frame)
         self.B, self.H, self.W, self.C = tensoru.shape(self.phi.overhead_features)
@@ -143,10 +149,11 @@ class StreamingGenerator(object):
                 observation.other_id_ordering,
                 feed_dict)
 
-    def save_dataset_sample(self, frame, observation,
-            trajectory_feeds, lidar_feeds, player_bbox,
-            lidar_sensor, lidar_params, save_directory,
-            make_sample_name, sample_labels):
+    def save_dataset_sample(self, frame, episode,
+            observation, trajectory_feeds, lidar_feeds,
+            player_bbox, lidar_sensor, lidar_params,
+            save_directory, make_sample_name,
+            sample_labels):
         """
 
         The original PRECOG dataset has these relevant keys:
@@ -163,6 +170,7 @@ class StreamingGenerator(object):
         Parameters
         ----------
         player_bbox : carla.BoundingBox
+            Player's bounding box used to get vehicle dimensions.
         lidar_sensor : carla.Sensor
         lidar_params : LidarParams
             Lidar parameters
@@ -170,8 +178,14 @@ class StreamingGenerator(object):
             Directory to save to.
         make_sample_name : lambda frame
             Function to generate name for sample
-        sample_label : dict
+        sample_labels : SampleLabelMap
         """
+        #
+        R = scipy.spatial.transform.Rotation
+        angle = (np.random.sample()*2 - 1)*np.pi
+        r = R.from_rotvec(np.array([0, 0, -1]) * angle).as_matrix()
+        #
+
         earlier_frame = frame - self.T
         datum = {}
         player_transform, other_id_ordering, \
@@ -195,7 +209,7 @@ class StreamingGenerator(object):
         agent_futures = agent_futures[:, :, :2]
 
         # datum['episode'] = episode
-        datum['episode'] = 0
+        datum['episode'] = episode
         datum['frame'] = frame
         datum['lidar_params'] = vars(lidar_params)
         datum['player_past'] = player_past
@@ -203,6 +217,6 @@ class StreamingGenerator(object):
         datum['overhead_features'] = overhead_features
         datum['player_future'] = player_future
         datum['agent_futures'] = agent_futures
-        datum['labels'] = sample_labels
+        datum['labels'] = vars(sample_labels)
         util.save_datum(datum, save_directory,
                 make_sample_name(earlier_frame))

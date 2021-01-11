@@ -34,16 +34,21 @@ SetVehicleLightState = carla.command.SetVehicleLightState
 FutureActor = carla.command.FutureActor
 
 import generate.util as util
-from generate.data import DataCollector, IntersectionReader
+from generate.data import (
+        DataCollector, IntersectionReader, SampleLabelFilter,
+        ScenarioIntersectionLabel)
 
 class DataGenerator(object):
 
     def __init__(self, args):
         self.args = args
+        # n_episdoes : int
+        #     Number of episodes to collect data.
+        self.n_episodes = self.args.n_episodes
         # n_frames : int
         #     Number of frames to collect data in each episode.
         #     Note: a vehicle takes roughly 130 frames to make a turn.
-        self.n_frames = 130 * 20
+        self.n_frames = self.args.n_frames
         # delta : float
         #     Step size for synchronous mode.
         self.delta = 0.1
@@ -58,15 +63,18 @@ class DataGenerator(object):
         self.carla_map = self.world.get_map()
         self.traffic_manager = self.client.get_trafficmanager(8000)        
         self.intersection_reader = IntersectionReader(
-                self.world, self.carla_map)
+                self.world, self.carla_map, debug=self.args.debug)
+        
+        # filtering out controlled intersections
+        self.exclude_filter = SampleLabelFilter(
+                intersection_type=[ScenarioIntersectionLabel.CONTROLLED])
 
-    def setup_players(self):
-        """
+    def _setup_actors(self, episode):
+        """Setup vehicles and data collectors for an episode.
+
         Parameters
         ----------
-        client : carla.Client
-        carla_map : carla.Map
-        args : argparse.Namespace
+        episode : int
 
         Returns
         -------
@@ -90,17 +98,17 @@ class DataGenerator(object):
         spawn_points = self.carla_map.get_spawn_points()
         number_of_spawn_points = len(spawn_points)
 
-        if self.args.number_of_vehicles < number_of_spawn_points:
+        if self.args.n_vehicles < number_of_spawn_points:
             np.random.shuffle(spawn_points)
-        elif self.args.number_of_vehicles > number_of_spawn_points:
+        elif self.args.n_vehicles > number_of_spawn_points:
             msg = 'requested %d vehicles, but could only find %d spawn points'
-            logging.warning(msg, self.args.number_of_vehicles, number_of_spawn_points)
-            self.args.number_of_vehicles = number_of_spawn_points
+            logging.warning(msg, self.args.n_vehicles, number_of_spawn_points)
+            self.args.n_vehicles = number_of_spawn_points
 
         # Generate vehicles
         batch = []
         for n, transform in enumerate(spawn_points):
-            if n >= self.args.number_of_vehicles:
+            if n >= self.args.n_vehicles:
                 break
             blueprint = np.random.choice(blueprints)
             if blueprint.has_attribute('color'):
@@ -130,28 +138,60 @@ class DataGenerator(object):
         
         # Add data collector to a handful of vehicles
         vehicles_ids_to_data_collect = vehicle_ids[
-                :self.args.number_of_data_collectors]
+                :self.args.n_data_collectors]
         for idx, vehicle_id in enumerate(vehicles_ids_to_data_collect):
             vehicle_ids_to_watch = vehicle_ids[:idx] + vehicle_ids[idx + 1:]
             vehicle = self.world.get_actor(vehicle_id)
             data_collector = DataCollector(vehicle,
-                    intersection_reader=self.intersection_reader)
+                    intersection_reader=self.intersection_reader,
+                    exclude_samples=self.exclude_filter,
+                    episode=episode, debug=self.args.debug)
             data_collector.start_sensor()
             data_collector.set_vehicles(vehicle_ids_to_watch)
             data_collectors.append(data_collector)
 
         logging.info(f"spawned {len(vehicle_ids)} vehicles")
         return vehicle_ids, data_collectors
-
-    def run(self):
-        """ Main loop for agent"""
+    
+    def _run_episode(self, episode):
+        """Run a dataset collection episode.
+        
+        Parameters
+        ----------
+        episode : int
+            The index of the episode to run.
+        """
         vehicle_ids = []
         data_collectors = []
-        world = None
-        original_settings = None
 
         try:
-            logging.info("Turning on synchronous setting and updating traffic manager.")
+            logging.info("Create vehicles and data collectors.")
+            vehicle_ids, data_collectors = self._setup_actors(episode)
+            logging.info("Running simulation.")
+            for idx in range(self.n_frames):
+                frame = self.world.tick()
+                for data_collector in data_collectors:
+                    data_collector.capture_step(frame)
+
+        finally:
+            logging.info(f"Ending episode {episode}.")
+            logging.info("Destroying data collectors.")
+            if data_collectors:
+                for data_collector in data_collectors:
+                    data_collector.destroy()
+            
+            logging.info("Destroying vehicles.")
+            if vehicle_ids:
+                self.client.apply_batch(
+                        [carla.command.DestroyActor(x) for x in vehicle_ids])
+
+    def run(self):
+        """Main entry point to data collection."""
+        original_settings = None
+        
+
+        try:
+            logging.info("Enabling synchronous setting and updating traffic manager.")
             original_settings = self.world.get_settings()
             settings = self.world.get_settings()
             settings.fixed_delta_seconds = self.delta
@@ -165,27 +205,14 @@ class DataGenerator(object):
             if self.args.hybrid:
                 self.traffic_manager.set_hybrid_physics_mode(True)
             self.world.apply_settings(settings)
+            if self.args.debug:
+                self.intersection_reader.debug_display_intersections(self.world)
 
-            logging.info("Create vehicles and data collectors.")
-            vehicle_ids, data_collectors = self.setup_players()
-            data_collector = data_collectors[0]
-            logging.info("Running simulation.")
-            for idx in range(self.n_frames):
-                frame = self.world.tick()
-                for data_collector in data_collectors:
-                    data_collector.capture_step(frame)
+            for episode in range(self.n_episodes):
+                logging.info(f"Running episode {episode}.")
+                self._run_episode(episode)
 
         finally:
-            logging.info("Destroying data collectors.")
-            if data_collectors:
-                for data_collector in data_collectors:
-                    data_collector.destroy()
-            
-            logging.info("Destroying vehicles.")
-            if vehicle_ids:
-                self.client.apply_batch(
-                        [carla.command.DestroyActor(x) for x in vehicle_ids])
-
             logging.info("Reverting to original settings.")
             if original_settings:
                 self.world.apply_settings(original_settings)
@@ -239,15 +266,27 @@ def main():
         default=None,
         type=int)
     argparser.add_argument(
-        '-n', '--number-of-vehicles',
+        '-e', '--n-episodes',
+        metavar='E',
+        default=5,
+        type=int,
+        help='Number of episodes to run (default: 5)')
+    argparser.add_argument(
+        '-f', '--n-frames',
+        metavar='F',
+        default=130 * 10,
+        type=int,
+        help='Number of frames in each episode to capture (default: 130 * 20)')
+    argparser.add_argument(
+        '-n', '--n-vehicles',
         metavar='N',
         default=80,
         type=int,
         help='number of vehicles (default: 80)')
     argparser.add_argument(
-        '-d', '--number-of-data-collectors',
+        '-d', '--n-data-collectors',
         metavar='D',
-        default=5,
+        default=20,
         type=int,
         help='number of data collectos to add on vehicles (default: 20)')
     argparser.add_argument(

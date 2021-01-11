@@ -16,6 +16,10 @@ import generate.util as util
 import precog.utils.class_util as classu
 import precog.utils.tensor_util as tensoru
 
+DEFAULT_PHI_ATTRIBUTES = attrdict.AttrDict({
+            "T": 20, "T_past": 10, "B": 1, "A": 5,
+            "C": 4, "D": 2, "H": 200, "W": 200})
+
 class LidarParams(object):
     @classu.member_initialize
     def __init__(self,
@@ -36,15 +40,77 @@ class ESPPhiData(object):
             light_strings=None):
         pass
 
+class ScenarioIntersectionLabel(object):
+    """Labels samples by proximity of vehicle to intersections."""
+
+    # NONE : str
+    #     Vehicle is not near any intersections
+    NONE = 'NONE'
+    # UNCONTROLLED : str
+    #     Vehicle is near an uncontrolled intersection
+    UNCONTROLLED = 'UNCONTROLLED'
+    # CONTROLLED : str
+    #     Vehicle is near a controlled intersection
+    CONTROLLED = 'CONTROLLED'
+
+class SampleLabelMap(object):
+    """Container of sample labels, categorized by different types."""
+    
+    @classu.member_initialize
+    def __init__(self,
+            intersection_type=ScenarioIntersectionLabel.NONE):
+        pass
+
+class SampleLabelFilter(object):
+    """Container for sample label filter."""
+
+    @classu.member_initialize
+    def __init__(self,
+            intersection_type=[]):
+        """
+        Parameters
+        ----------
+        intersection_type : list of str
+        """
+        pass
+
+    def contains(self, _type, label):
+        """Check whether a label of type _type is in the filter.
+
+        Parameters
+        ----------
+        _type : str
+            Label type to lookup.
+        label : str
+            Label to check for existence in filter.
+
+        Returns
+        -------
+        bool
+        """
+        return label in getattr(self, _type, [])
+
 def create_phi(settings):
     s = settings
     tf.compat.v1.reset_default_graph()
-    S_past_world_frame = tf.zeros((s.B, s.A, s.T_past, s.D), dtype=tf.float64, name="S_past_world_frame") 
-    S_future_world_frame = tf.zeros((s.B, s.A, s.T, s.D), dtype=tf.float64, name="S_future_world_frame")
-    yaws = tf.zeros((s.B, s.A), dtype=tf.float64, name="yaws")
-    overhead_features = tf.zeros((s.B, s.H, s.W, s.C), dtype=tf.float64, name="overhead_features")
-    agent_presence = tf.zeros((s.B, s.A), dtype=tf.float64, name="agent_presence")
-    light_strings = tf.zeros((s.B,), dtype=tf.string, name="light_strings")
+    S_past_world_frame = tf.zeros(
+            (s.B, s.A, s.T_past, s.D),
+            dtype=tf.float64, name="S_past_world_frame") 
+    S_future_world_frame = tf.zeros(
+            (s.B, s.A, s.T, s.D),
+            dtype=tf.float64, name="S_future_world_frame")
+    yaws = tf.zeros(
+            (s.B, s.A),
+            dtype=tf.float64, name="yaws")
+    overhead_features = tf.zeros(
+            (s.B, s.H, s.W, s.C),
+            dtype=tf.float64, name="overhead_features")
+    agent_presence = tf.zeros(
+            (s.B, s.A),
+            dtype=tf.float64, name="agent_presence")
+    light_strings = tf.zeros(
+            (s.B,),
+            dtype=tf.string, name="light_strings")
     return ESPPhiData(
             S_past_world_frame=S_past_world_frame,
             S_future_world_frame=S_future_world_frame,
@@ -90,22 +156,18 @@ def create_lidar_blueprint_v2(world):
     lidar_bp.set_attribute('lower_fov', '-30.0')
     return lidar_bp
 
-class ScenarioLabel(object):
-    NONE = 'NONE'
-    UNCONTROLLED = 'UNCONTROLLED'
-    CONTROLLED = 'CONTROLLED'
-
 class IntersectionReader(object):
     """Used to keep track of intersections in map and check whether
     an action is in an intersection.
     """
 
-    # radius used to check whether junction is near traffic lights
+    # radius used to check whether junction has traffic lights
     FIND_RADIUS = 25
     # radius used to check whether vehicle is in junction
-    DETECT_RADIUS = 25
+    DETECT_RADIUS = 30
 
-    def __init__(self, carla_world, carla_map):
+    def __init__(self, carla_world, carla_map, debug=False):
+        self._debug = debug
         # get nodes in graph
         topology = carla_map.get_topology()
         G = nx.Graph()
@@ -128,29 +190,43 @@ class IntersectionReader(object):
 
         is_controlled_junction = (tlight_distances < self.FIND_RADIUS).any(axis=0)
         is_uncontrolled_junction = np.logical_not(is_controlled_junction)
-        self.controlled_junctions = util.compress_to_list(
-                junctions, is_controlled_junction)
-        self.uncontrolled_junctions = util.compress_to_list(
-                junctions, is_uncontrolled_junction)
-        # check?
         self.controlled_junction_locations \
                 = junction_locations[is_controlled_junction]
         self.uncontrolled_junction_locations \
                 = junction_locations[is_uncontrolled_junction]
+    
+    def debug_display_intersections(self, carla_world):
+        for loc in self.controlled_junction_locations:
+            carla_world.debug.draw_string(
+                    util.ndarray_to_location(loc) + carla.Location(z=3.0),
+                    'o',
+                    color=carla.Color(r=255, g=0, b=0, a=100),
+                    life_time=10.0)
+        for loc in self.uncontrolled_junction_locations:
+            carla_world.debug.draw_string(
+                    util.ndarray_to_location(loc) + carla.Location(z=3.0),
+                    'o',
+                    color=carla.Color(r=0, g=255, b=0, a=100),
+                    life_time=10.0)
 
     def at_intersection_to_label(self, actor):
         """Retrieve the label corresponding to the actor's location in the
-        map based on proximity to intersections."""
+        map based on proximity to intersections.
+        
+        Parameters
+        ----------
+        actor : carla.Actor
+        """
         actor_location = util.actor_to_location_ndarray(actor)
         distances_to_uncontrolled = np.linalg.norm(
                 self.uncontrolled_junction_locations - actor_location, axis=1)
         if np.any(distances_to_uncontrolled < self.DETECT_RADIUS):
-            return ScenarioLabel.UNCONTROLLED
+            return ScenarioIntersectionLabel.UNCONTROLLED
         distances_to_controlled = np.linalg.norm(
                 self.controlled_junction_locations - actor_location, axis=1)
         if np.any(distances_to_controlled < self.DETECT_RADIUS):
-            return ScenarioLabel.CONTROLLED
-        return ScenarioLabel.NONE
+            return ScenarioIntersectionLabel.CONTROLLED
+        return ScenarioIntersectionLabel.NONE
 
 
 class DataCollector(object):
@@ -160,24 +236,34 @@ class DataCollector(object):
             intersection_reader=None,
             save_frequency=10,
             save_directory='out',
-            burn_frames=60):
+            burn_frames=60,
+            episode=0,
+            exclude_samples=SampleLabelFilter(),
+            phi_attributes=DEFAULT_PHI_ATTRIBUTES,
+            debug=False):
         """
         player_actor : carla.Vehicle
         intersection_reader : IntersectionReader
+        exclude_samples : SampleLabelFilter
+            Filter to exclude saving samples by label.
+        phi_attributes : attrdict.AttrDict
+            Attributes T, T_past, B, A, ...etc to construct Phi object.
         """
-        self.lidar_params = LidarParams()
-        s = attrdict.AttrDict({
-            "T": 20, "T_past": 10, "B": 1, "A": 5,
-            "C": 4, "D": 2, "H": 200, "W": 200})
         self._player = player_actor
         self._intersection_reader = intersection_reader
-        self._phi = create_phi(s)
+        self.save_frequency = save_frequency
+        self._save_directory = save_directory
+        self.burn_frames = burn_frames
+        self.episode = episode
+        self.exclude_samples = exclude_samples
+        self._debug = debug
+        self.lidar_params = LidarParams()
+        self._phi = create_phi(phi_attributes)
         _, _, self.T_past, _ = tensoru.shape(self._phi.S_past_world_frame)
         self.B, self.A, self.T, self.D = tensoru.shape(self._phi.S_future_world_frame)
         self.B, self.H, self.W, self.C = tensoru.shape(self._phi.overhead_features)
-        self._save_directory = save_directory
-        self._make_sample_name = lambda frame : "agent{:03d}_frame{:08d}".format(
-                self._player.id, frame)
+        self._make_sample_name = lambda frame : "ep{:03d}_agent{:03d}_frame{:08d}".format(
+                self.episode, self._player.id, frame)
         self._world = self._player.get_world()
         self._other_vehicles = list()
         self._trajectory_size = max(self.T, self.T_past) + 1
@@ -194,7 +280,6 @@ class DataCollector(object):
         # _n_feeds : int
         #     Size of trajectory/lidar feed dict
         self._n_feeds = self.T + 1
-        self.save_frequency = save_frequency
         self.streaming_generator = generate_observation.StreamingGenerator(
                 self._phi)
         self.sensor = self._world.spawn_actor(
@@ -203,8 +288,6 @@ class DataCollector(object):
                 attach_to=self._player,
                 attachment_type=carla.AttachmentType.Rigid)
         self._first_frame = None
-        self.burn_frames = burn_frames
-
     
     def start_sensor(self):
         # We need to pass the lambda a weak reference to
@@ -241,6 +324,13 @@ class DataCollector(object):
         self.others_transforms.append(others_transform)
 
     def _should_save_dataset_sample(self, frame):
+        """Check if collector reached a frame where it should save dataset sample.
+
+        Parameters
+        ----------
+        frame : int
+        """
+
         if len(self.trajectory_feeds) == 0:
             return False
         if frame - next(iter(self.trajectory_feeds)) > self.T:
@@ -254,12 +344,62 @@ class DataCollector(object):
         return False
     
     def _get_sample_labels(self):
+        """Get labels for sample collected based on the sensor's current position. 
+
+        Returns
+        -------
+        SampleLabelMap
+        """
         if self._intersection_reader is not None:
             intersection_type_label = self._intersection_reader \
                     .at_intersection_to_label(self._player)
         else:
-            intersection_type_label = ScenarioLabel.NONE
-        return { 'intersection_type': intersection_type_label }
+            intersection_type_label = ScenarioIntersectionLabel.NONE
+        return SampleLabelMap(
+                intersection_type=intersection_type_label)
+
+    def debug_draw_red_player_bbox(self):
+        self._world.debug.draw_box(
+                carla.BoundingBox(
+                    self._player.get_transform().location,
+                    self._player.bounding_box.extent),
+                self._player.get_transform().rotation,
+                thickness=0.5,
+                color=carla.Color(r=255, g=0, b=0, a=255),
+                life_time=3.0)
+
+    def debug_draw_green_player_bbox(self):
+        self._world.debug.draw_box(
+                carla.BoundingBox(
+                        self._player.get_transform().location,
+                        self._player.bounding_box.extent),
+                self._player.get_transform().rotation,
+                thickness=0.5,
+                color=carla.Color(r=0, g=255, b=0, a=255),
+                life_time=3.0)
+
+    def _should_exclude_dataset_sample(self, sample_labels):
+        """Check if collector should exclude saving sample at this sensor location.
+
+        Parameters
+        ----------
+        sample_labels : SampleLabelMap
+
+        Returns
+        -------
+        bool
+        """
+        for key, val in vars(sample_labels).items():
+            if self.exclude_samples.contains(key, val):
+                if self._debug:
+                    self.debug_draw_red_player_bbox()
+                    logging.debug("filter")
+                return True
+        
+        if self._debug:
+            self.debug_draw_green_player_bbox()
+            logging.debug("don't filter")
+        return False
 
     def capture_step(self, frame):
         """Have the data collector capture the current snapshot of the simulation.
@@ -285,12 +425,15 @@ class DataCollector(object):
             if self._should_save_dataset_sample(frame):
                 """Save dataset sample if needed."""
                 logging.debug(f"saving sample. player = {self._player.id} frame = {frame}")
-                self.streaming_generator.save_dataset_sample(
-                        frame, observation, self.trajectory_feeds,
-                        self.lidar_feeds, self._player.bounding_box,
-                        self.sensor, self.lidar_params,
-                        self._save_directory, self._make_sample_name,
-                        self._get_sample_labels())
+                sample_labels = self._get_sample_labels()
+                if not self._should_exclude_dataset_sample(sample_labels):
+                    self.streaming_generator.save_dataset_sample(
+                            frame, self.episode, observation,
+                            self.trajectory_feeds, self.lidar_feeds,
+                            self._player.bounding_box,
+                            self.sensor, self.lidar_params,
+                            self._save_directory, self._make_sample_name,
+                            sample_labels)
         
         if len(self.trajectory_feeds) > self._n_feeds:
             """Remove older frames.
