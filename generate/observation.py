@@ -1,4 +1,6 @@
+import attrdict
 import numpy as np
+import scipy
 import pandas as pd
 import carla
 
@@ -105,7 +107,102 @@ class PlayerObservation(object):
                 other_id_ordering=other_id_ordering, radius=self.radius)
 
 
+class DrivingSample(object):
+    """Represents a dataset sample. Used for data augmentation."""
+
+    @classu.member_initialize
+    def __init__(self, episode, frame, lidar_params, sample_labels,
+            save_directory, sample_name, lidar_points, player_bbox,
+            player_past, agent_pasts, player_future, agent_futures,
+            should_augment=False):
+        """
+        Parameters
+        ----------
+        sample_name : str
+            File name without extension to name sample.
+        lidar_points : np.array
+            LIDAR points; np.array of shape (number of points, 3).
+        player_past : np.array
+            Player past trajectory; np.array of shape (T_past, 3).
+        agent_pasts : np.array
+            Agent pasts trajectory; np.array of shape (A-1, T_past, 3).
+        player_future
+        agent_futures
+        """
+        pass
+
+    def _save_sample(self, sample_name, lidar_points, player_past,
+            agent_pasts, player_future, agent_futures):
+        overhead_features = generate_overhead.build_BEV(
+                lidar_points, self.lidar_params, self.player_bbox)
+        player_past = player_past[:, :2]
+        agent_pasts = agent_pasts[:, :, :2]
+        player_future = player_future[:, :2]
+        agent_futures = agent_futures[:, :, :2]
+
+        datum = {}
+        datum['episode'] = self.episode
+        datum['frame'] = self.frame
+        datum['lidar_params'] = vars(self.lidar_params)
+        datum['player_past'] = player_past
+        datum['agent_pasts'] = agent_pasts
+        datum['overhead_features'] = overhead_features
+        datum['player_future'] = player_future
+        datum['agent_futures'] = agent_futures
+        datum['labels'] = vars(self.sample_labels)
+        util.save_datum(datum, self.save_directory, sample_name)
+
+    def _generate_augmentations(self):
+        R = scipy.spatial.transform.Rotation
+        n_augments = np.random.randint(1,5)
+
+        for idx in range(n_augments):
+            sample_name = f"{self.sample_name}_aug{idx}"
+
+            """Rotation about origin."""
+            angle = (np.random.sample()*2 - 1)*np.pi
+            rotmat = R.from_rotvec(np.array([0, 0, -1]) * angle).as_matrix()
+            revrotmat = R.from_rotvec(np.array([0, 0, 1]) * angle).as_matrix()
+            lidar_points = (revrotmat @ self.lidar_points.T).T
+            player_past = (rotmat @ self.player_past.T).T
+            n_oagents = self.agent_pasts.shape[0]
+            agent_pasts = np.reshape(self.agent_pasts, (-1, 3))
+            agent_pasts = (rotmat @ agent_pasts.T).T
+            agent_pasts = np.reshape(agent_pasts, (n_oagents, -1, 3))
+            player_future = (rotmat @ self.player_future.T).T
+            n_oagents = self.agent_futures.shape[0]
+            agent_futures = np.reshape(self.agent_futures, (-1, 3))
+            agent_futures = (rotmat @ agent_futures.T).T
+            agent_futures = np.reshape(agent_futures, (n_oagents, -1, 3))
+
+            """Shift points about (x,y)-plane."""
+            # unit = np.array([1,0,0])
+            # angle = (np.random.sample()*2 - 1)*np.pi
+            # mag = np.random.sample()*10
+            # rotmat = R.from_rotvec(np.array([0, 0, -1]) * angle).as_matrix()
+            # revrotmat = R.from_rotvec(np.array([0, 0, 1]) * angle).as_matrix()
+            # shift = rotmat @ (mag * unit)
+            # revshift = revrotmat @ (mag * unit)
+            # lidar_points = lidar_points + revshift
+            # player_past = player_past + shift
+            # agent_pasts = agent_pasts + shift
+            # player_future = player_future + shift
+            # agent_futures = agent_futures + shift
+
+            self._save_sample(sample_name, lidar_points, player_past,
+                    agent_pasts, player_future, agent_futures)
+
+    def save(self):
+        if self.should_augment:
+            self._generate_augmentations()
+        else:
+            self._save_sample(self.sample_name, self.lidar_points, self.player_past,
+                    self.agent_pasts, self.player_future, self.agent_futures)
+
+
 class StreamingGenerator(object):
+    """Generates driving scenario samples by combining streams of trajectories,
+    and LIDAR point clouds."""
 
     @classu.member_initialize
     def __init__(self, phi, should_augment=False):
@@ -127,15 +224,13 @@ class StreamingGenerator(object):
         ----------
         observation : PlayerObservation
         trajectory_feeds : collection.OrderedDict
-
         """
-        # assert(len(self.others_transforms) > self.T_past)
-        feed_dict = tfutil.FeedDict()
-        pasts = observation.player_positions_local[-self.T_past:, :2][None]
-        pasts_other = observation.agent_positions_local[:, -self.T_past:, :2]
-        pasts_joint = np.concatenate((pasts, pasts_other))[:self.A][None]
-        pasts_batch = np.tile(pasts_joint, (self.B, 1, 1, 1))
-        feed_dict[self.phi.S_past_world_frame] = pasts_batch
+        player_past = observation.player_positions_local[-self.T_past:, :3]
+        agent_pasts = observation.agent_positions_local[:, -self.T_past:, :3]
+        feed_dict = attrdict.AttrDict({
+                'player_past': player_past,
+                'agent_pasts': agent_pasts})
+
         # not sure how agent_presence is being used to train PRECOG
         # agent_presence = np.ones(shape=tensoru.shape(phi.agent_presence), dtype=np.float32)
         # TODO: set yaws
@@ -180,43 +275,26 @@ class StreamingGenerator(object):
             Function to generate name for sample
         sample_labels : SampleLabelMap
         """
-        #
-        R = scipy.spatial.transform.Rotation
-        angle = (np.random.sample()*2 - 1)*np.pi
-        r = R.from_rotvec(np.array([0, 0, -1]) * angle).as_matrix()
-        #
-
         earlier_frame = frame - self.T
-        datum = {}
         player_transform, other_id_ordering, \
                 feed_dict = trajectory_feeds[earlier_frame]
         observation = observation.copy_with_new_ordering(other_id_ordering)
-        raw_data = lidar_feeds[earlier_frame]
+        lidar_measurement = lidar_feeds[earlier_frame]
 
-        overhead_features = generate_overhead.build_BEV(
-            raw_data, lidar_params, player_bbox)
-        assert(tensoru.shape(overhead_features) == (self.H, self.W, self.C,))
-
-        joint_past_local = np.squeeze(feed_dict[self.phi.S_past_world_frame])
-        player_past = joint_past_local[0]
-        agent_pasts = joint_past_local[1:self.A]
-        
+        lidar_points = generate_overhead.get_normalized_sensor_data(
+                lidar_measurement)
+        player_past = feed_dict.player_past
+        agent_pasts = feed_dict.agent_pasts
         player_future = observation.player_positions_world[1:self.T+1, :3] \
                 - util.transform_to_location_ndarray(player_transform)
-        player_future = player_future[:, :2]
         agent_futures = observation.agent_positions_world[:, 1:self.T+1, :3] \
                 - util.transform_to_location_ndarray(player_transform)
-        agent_futures = agent_futures[:, :, :2]
 
-        # datum['episode'] = episode
-        datum['episode'] = episode
-        datum['frame'] = frame
-        datum['lidar_params'] = vars(lidar_params)
-        datum['player_past'] = player_past
-        datum['agent_pasts'] = agent_pasts
-        datum['overhead_features'] = overhead_features
-        datum['player_future'] = player_future
-        datum['agent_futures'] = agent_futures
-        datum['labels'] = vars(sample_labels)
-        util.save_datum(datum, save_directory,
-                make_sample_name(earlier_frame))
+        sample = DrivingSample(episode, frame, lidar_params,
+                sample_labels, save_directory,
+                make_sample_name(earlier_frame),
+                lidar_points, player_bbox, player_past,
+                agent_pasts,
+                player_future, agent_futures,
+                should_augment=self.should_augment)
+        sample.save()

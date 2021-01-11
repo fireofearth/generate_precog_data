@@ -143,23 +143,24 @@ def create_lidar_blueprint(world):
     return lidar_bp
 
 def create_lidar_blueprint_v2(world):
-    """Construct a stronger LIDAR sensor blueprint
+    """Construct a stronger LIDAR sensor blueprint.
+    Used for debugging.
     """
     bp_library = world.get_blueprint_library()
     lidar_bp = bp_library.find('sensor.lidar.ray_cast')
     lidar_bp.set_attribute('channels', '48')
-    lidar_bp.set_attribute('range', '70')
-    lidar_bp.set_attribute('dropoff_general_rate', '0.25')
+    lidar_bp.set_attribute('range', '60')
+    lidar_bp.set_attribute('dropoff_general_rate', '0.38')
+    lidar_bp.set_attribute('atmosphere_attenuation_rate', '0.003')
     lidar_bp.set_attribute('points_per_second', '100000')
     lidar_bp.set_attribute('rotation_frequency', '10.0')
-    lidar_bp.set_attribute('upper_fov', '30.0')
+    lidar_bp.set_attribute('upper_fov', '10.0')
     lidar_bp.set_attribute('lower_fov', '-30.0')
     return lidar_bp
 
 class IntersectionReader(object):
     """Used to keep track of intersections in map and check whether
-    an action is in an intersection.
-    """
+    an action is in an intersection."""
 
     # radius used to check whether junction has traffic lights
     FIND_RADIUS = 25
@@ -240,6 +241,7 @@ class DataCollector(object):
             episode=0,
             exclude_samples=SampleLabelFilter(),
             phi_attributes=DEFAULT_PHI_ATTRIBUTES,
+            should_augment=False,
             debug=False):
         """
         player_actor : carla.Vehicle
@@ -281,7 +283,7 @@ class DataCollector(object):
         #     Size of trajectory/lidar feed dict
         self._n_feeds = self.T + 1
         self.streaming_generator = generate_observation.StreamingGenerator(
-                self._phi)
+                self._phi, should_augment=should_augment)
         self.sensor = self._world.spawn_actor(
                 create_lidar_blueprint_v2(self._world),
                 carla.Transform(carla.Location(z=2.5)),

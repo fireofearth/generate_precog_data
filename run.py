@@ -88,11 +88,6 @@ class DataGenerator(object):
 
         blueprints = self.world.get_blueprint_library().filter('vehicle.*')
         blueprints = [x for x in blueprints if int(x.get_attribute('number_of_wheels')) == 4]
-        # if args.safe:
-        #     blueprints = [x for x in blueprints if not x.id.endswith('isetta')]
-        #     blueprints = [x for x in blueprints if not x.id.endswith('carlacola')]
-        #     blueprints = [x for x in blueprints if not x.id.endswith('cybertruck')]
-        #     blueprints = [x for x in blueprints if not x.id.endswith('t2')]
         blueprints = sorted(blueprints, key=lambda bp: bp.id)
 
         spawn_points = self.carla_map.get_spawn_points()
@@ -144,8 +139,11 @@ class DataGenerator(object):
             vehicle = self.world.get_actor(vehicle_id)
             data_collector = DataCollector(vehicle,
                     intersection_reader=self.intersection_reader,
+                    save_directory=self.args.save_directory,
                     exclude_samples=self.exclude_filter,
-                    episode=episode, debug=self.args.debug)
+                    episode=episode,
+                    should_augment=self.args.augment,
+                    debug=self.args.debug)
             data_collector.start_sensor()
             data_collector.set_vehicles(vehicle_ids_to_watch)
             data_collectors.append(data_collector)
@@ -189,7 +187,6 @@ class DataGenerator(object):
         """Main entry point to data collection."""
         original_settings = None
         
-
         try:
             logging.info("Enabling synchronous setting and updating traffic manager.")
             original_settings = self.world.get_settings()
@@ -222,6 +219,12 @@ class DataGenerator(object):
 # -- main() --------------------------------------------------------------
 # ==============================================================================
 
+def dir_path(s):
+    if os.path.isdir(s):
+        return s
+    else:
+        raise argparse.ArgumentTypeError(
+                f"readable_dir:{s} is not a valid path")
 
 def main():
     """Main method"""
@@ -232,7 +235,7 @@ def main():
         '-v', '--verbose',
         action='store_true',
         dest='debug',
-        help='Print debug information')
+        help='Show debug information')
     argparser.add_argument(
         '--host',
         metavar='H',
@@ -245,21 +248,11 @@ def main():
         type=int,
         help='TCP port to listen to (default: 2000)')
     argparser.add_argument(
-        '--res',
-        metavar='WIDTHxHEIGHT',
-        default='1280x720',
-        help='Window resolution (default: 1280x720)')
-    argparser.add_argument(
-        '--filter',
-        metavar='PATTERN',
-        # default='vehicle.*',
-        default='vehicle.tesla.model3',
-        help='Actor filter (default: "vehicle.*")')
-    argparser.add_argument(
-        '--gamma',
-        default=2.2,
-        type=float,
-        help='Gamma correction of the camera (default: 2.2)')
+        '--dir',
+        type=dir_path,
+        default='out',
+        dest='save_directory',
+        help='Directory to save the samples.')
     argparser.add_argument(
         '-s', '--seed',
         help='Set seed for repeating executions (default: None)',
@@ -268,15 +261,15 @@ def main():
     argparser.add_argument(
         '-e', '--n-episodes',
         metavar='E',
-        default=5,
+        default=53,
         type=int,
         help='Number of episodes to run (default: 5)')
     argparser.add_argument(
         '-f', '--n-frames',
         metavar='F',
-        default=130 * 10,
+        default=1000,
         type=int,
-        help='Number of frames in each episode to capture (default: 130 * 20)')
+        help='Number of frames in each episode to capture (default: 1000)')
     argparser.add_argument(
         '-n', '--n-vehicles',
         metavar='N',
@@ -290,14 +283,10 @@ def main():
         type=int,
         help='number of data collectos to add on vehicles (default: 20)')
     argparser.add_argument(
-        '--safe',
+        '--augment-data',
         action='store_true',
-        help='avoid spawning vehicles prone to accidents')
-    argparser.add_argument(
-        '--filterv',
-        metavar='PATTERN',
-        default='vehicle.*',
-        help='vehicles filter (default: "vehicle.*")')
+        dest='augment',
+        help='Enable data augmentation')
     argparser.add_argument(
         '--hybrid',
         action='store_true',
@@ -305,8 +294,7 @@ def main():
     argparser.add_argument(
         '--car-lights-on',
         action='store_true',
-        default=False,
-        help='Enanble car lights')
+        help='Enable car lights')
 
     args = argparser.parse_args()
     log_level = logging.DEBUG if args.debug else logging.INFO
