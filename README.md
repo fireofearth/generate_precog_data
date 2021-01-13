@@ -2,6 +2,7 @@
 
 ## Screenshot of run
 
+Red dots are controlled intersections, greed dots are uncontrolled intersections.
 ![run screenshot](https://raw.githubusercontent.com/fireofearth/generate_precog_data/master/assets/precog_generate_data.png)
 
 ## Plot of sample
