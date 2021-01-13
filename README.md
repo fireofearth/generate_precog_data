@@ -2,8 +2,12 @@
 
 ## Screenshot of run
 
-Red dots are controlled intersections, greed dots are uncontrolled intersections.
 ![run screenshot](https://raw.githubusercontent.com/fireofearth/generate_precog_data/master/assets/precog_generate_data.png)
+
+Figure:
+- Unreal Engine draws indicators in the window
+- red dots are controlled intersections, greed dots are uncontrolled intersections.
+- red rectangles show positions where LIDAR vehicles attempted to collect samples controlled intersections, greed dots show positions where LIDAR vehicles successfully collect data from uncontrolled intersections.
 
 ## Plot of sample
 
