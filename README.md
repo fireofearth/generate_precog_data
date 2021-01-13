@@ -1,6 +1,16 @@
 # Generate PRECOG Data
 
-Collects data for PRECOG ESP model presented in <https://people.eecs.berkeley.edu/~rmcallister/publication/precog/>
+## Screenshot of run
+
+![run screenshot](https://raw.githubusercontent.com/fireofearth/generate_precog_data/master/assets/precog_generate_data.png)
+
+## Plot of sample
+
+![plot sample](https://raw.githubusercontent.com/fireofearth/generate_precog_data/master/assets/plot_sample.png)
+
+## Synopsis
+
+Collects data for PRECOG ESP model presented in <https://people.eecs.berkeley.edu/~rmcallister/publication/precog/> for *CARLA 0.9*
 
 For each map in the CARLA simulator, I run 4 episodes of data collection. For each episodes, I spawn 80 cars and add LIDAR sensors randomly to 20 of them. These vehicles roam the map on autopilot for 1000 frames, and the cars with sensors capture samples at 10 frame intervals (not capturing the samples during the first 50 frames as cars just spawning are accelerating from rest). After capturing, I only save the samples that are in the scenarios of {uncontrolled intersections, no intersections} (or just {uncontrolled intersections} if a map has few uncontrolled intersections), augmenting the samples by random rotation about the origin.
 
