@@ -27,8 +27,8 @@ For each map in the CARLA simulator, I run 4 episodes of data collection. For ea
 
 ```
 usage: run.py [-h] [-v] [--host H] [-p P] [--dir SAVE_DIRECTORY] [-s SEED]
-              [-e E] [-f F] [-n N] [-d D] [--augment-data] [--hybrid]
-              [--car-lights-on]
+              [--map MAP] [-e E] [-f F] [-b B] [-n N] [-d D] [--augment-data]
+              [--n-augments N_AUGMENTS] [--hybrid] [--car-lights-on]
 
 CARLA Automatic Control Client
 
@@ -39,14 +39,22 @@ optional arguments:
   -p P, --port P        TCP port to listen to (default: 2000)
   --dir SAVE_DIRECTORY  Directory to save the samples.
   -s SEED, --seed SEED  Set seed for repeating executions (default: None)
-  -e E, --n-episodes E  Number of episodes to run (default: 5)
+  --map MAP             Set the CARLA map to collect data from.
+  -e E, --n-episodes E  Number of episodes to run (default: 10)
   -f F, --n-frames F    Number of frames in each episode to capture (default:
                         1000)
+  -b B, --n-burn-frames B
+                        Number of frames at the beginning of each episode to
+                        skip data collection (default: 60)
   -n N, --n-vehicles N  number of vehicles (default: 80)
   -d D, --n-data-collectors D
                         number of data collectos to add on vehicles (default:
                         20)
   --augment-data        Enable data augmentation
+  --n-augments N_AUGMENTS
+                        Number of augmentations to create from each sample. If
+                        --n-aguments=5 then a random number from 1 to 5
+                        augmentations will be produced from each sample
   --hybrid              Enanble
   --car-lights-on       Enable car lights
 ```
