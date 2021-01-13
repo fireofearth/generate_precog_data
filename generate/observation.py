@@ -1,3 +1,4 @@
+import logging
 import attrdict
 import numpy as np
 import scipy
@@ -78,15 +79,22 @@ class PlayerObservation(object):
             ids = self.get_nearby_agent_ids()
             self.other_id_ordering = ids[:self.A - 1]
 
-        others_transforms_list = [None] * len(self.others_transforms)
-        for idx, others_transform in enumerate(self.others_transforms):
-            others_transforms_list[idx] = util.map_to_list(
-                    lambda aid: util.transform_to_location_ndarray(others_transform[aid]),
-                    self.other_id_ordering)
+        if self.other_id_ordering.shape != (0,):
+            others_transforms_list = [None] * len(self.others_transforms)
+            for idx, others_transform in enumerate(self.others_transforms):
+                others_transforms_list[idx] = util.map_to_list(
+                        lambda aid: util.transform_to_location_ndarray(others_transform[aid]),
+                        self.other_id_ordering)
 
-        # agent_positions_world : ndarray of shape (A-1, len(self.others_transforms), 3)
-        self.agent_positions_world = np.array(others_transforms_list).transpose(1, 0, 2)
-        self.n_missing = max(self.A - 1 - self.agent_positions_world.shape[0], 0)
+            # agent_positions_world : ndarray of shape (A-1, len(self.others_transforms), 3)
+            self.agent_positions_world = np.array(others_transforms_list).transpose(1, 0, 2)
+            self.n_missing = max(self.A - 1 - self.agent_positions_world.shape[0], 0)
+            self.has_other_agents = True
+        else:
+            self.agent_positions_world = np.array([])
+            self.n_missing = self.A - 1
+            self.has_other_agents = False
+
         if self.n_missing > 0:
             faraway = util.transform_to_location_ndarray(self.player_transform) + 500
             faraway_tile = np.tile(
@@ -96,6 +104,7 @@ class PlayerObservation(object):
             else:
                 self.agent_positions_world = np.concatenate(
                     (self.agent_positions_world, faraway_tile), axis=0)
+        
         # agent_positions_local : ndarray of shape (A-1, len(self.others_transforms), 3)
         self.agent_positions_local = self.agent_positions_world \
                 - util.transform_to_location_ndarray(self.player_transform)
@@ -114,7 +123,7 @@ class DrivingSample(object):
     def __init__(self, episode, frame, lidar_params, sample_labels,
             save_directory, sample_name, lidar_points, player_bbox,
             player_past, agent_pasts, player_future, agent_futures,
-            should_augment=False):
+            should_augment=False, n_augments=1):
         """
         Parameters
         ----------
@@ -154,7 +163,7 @@ class DrivingSample(object):
 
     def _generate_augmentations(self):
         R = scipy.spatial.transform.Rotation
-        n_augments = np.random.randint(1,5)
+        n_augments = np.random.randint(1, self.n_augments+1)
 
         for idx in range(n_augments):
             sample_name = f"{self.sample_name}_aug{idx}"
@@ -205,7 +214,7 @@ class StreamingGenerator(object):
     and LIDAR point clouds."""
 
     @classu.member_initialize
-    def __init__(self, phi, should_augment=False):
+    def __init__(self, phi, should_augment=False, n_augments=1):
         """
         Parameters
         ----------
@@ -278,6 +287,10 @@ class StreamingGenerator(object):
         earlier_frame = frame - self.T
         player_transform, other_id_ordering, \
                 feed_dict = trajectory_feeds[earlier_frame]
+        ## TODO: Maybe add some check to not save samplew without other agents. 
+        # if not observation.has_other_agents:
+        #     logging.debug("Could not obtain other agents for this sample. Skipping.")
+        #     return
         observation = observation.copy_with_new_ordering(other_id_ordering)
         lidar_measurement = lidar_feeds[earlier_frame]
 
@@ -296,5 +309,6 @@ class StreamingGenerator(object):
                 lidar_points, player_bbox, player_past,
                 agent_pasts,
                 player_future, agent_futures,
-                should_augment=self.should_augment)
+                should_augment=self.should_augment,
+                n_augments=self.n_augments)
         sample.save()

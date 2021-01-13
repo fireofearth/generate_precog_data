@@ -58,8 +58,13 @@ class DataGenerator(object):
             np.random.seed(self.args.seed)
 
         self.client = carla.Client(self.args.host, self.args.port)
-        self.client.set_timeout(4.0)
-        self.world = self.client.get_world()
+        self.client.set_timeout(10.0)
+        if self.args.map is None:
+            self.world = self.client.get_world()
+            logging.info(f"Using the map {self.args.map}.")
+        else:
+            logging.info(f"Using the current map.")
+            self.world = self.client.load_world(self.args.map)
         self.carla_map = self.world.get_map()
         self.traffic_manager = self.client.get_trafficmanager(8000)        
         self.intersection_reader = IntersectionReader(
@@ -92,6 +97,8 @@ class DataGenerator(object):
 
         spawn_points = self.carla_map.get_spawn_points()
         number_of_spawn_points = len(spawn_points)
+        logging.info(f"Using {self.args.n_vehicles} out of "
+                f"{number_of_spawn_points} spawn points")
 
         if self.args.n_vehicles < number_of_spawn_points:
             np.random.shuffle(spawn_points)
@@ -140,9 +147,11 @@ class DataGenerator(object):
             data_collector = DataCollector(vehicle,
                     intersection_reader=self.intersection_reader,
                     save_directory=self.args.save_directory,
+                    n_burn_frames=self.args.n_burn_frames,
                     exclude_samples=self.exclude_filter,
                     episode=episode,
                     should_augment=self.args.augment,
+                    n_augments=self.args.n_augments,
                     debug=self.args.debug)
             data_collector.start_sensor()
             data_collector.set_vehicles(vehicle_ids_to_watch)
@@ -259,17 +268,27 @@ def main():
         default=None,
         type=int)
     argparser.add_argument(
+        '--map',
+        type=str,
+        help="Set the CARLA map to collect data from.")
+    argparser.add_argument(
         '-e', '--n-episodes',
         metavar='E',
-        default=4,
+        default=10,
         type=int,
-        help='Number of episodes to run (default: 5)')
+        help='Number of episodes to run (default: 10)')
     argparser.add_argument(
         '-f', '--n-frames',
         metavar='F',
         default=1000,
         type=int,
         help='Number of frames in each episode to capture (default: 1000)')
+    argparser.add_argument(
+        '-b', '--n-burn-frames',
+        metavar='B',
+        default=60,
+        type=int,
+        help="Number of frames at the beginning of each episode to skip data collection (default: 60)")
     argparser.add_argument(
         '-n', '--n-vehicles',
         metavar='N',
@@ -288,6 +307,12 @@ def main():
         dest='augment',
         help='Enable data augmentation')
     argparser.add_argument(
+        '--n-augments',
+        default=1,
+        type=int,
+        help=("Number of augmentations to create from each sample. "
+        "If --n-aguments=5 then a random number from 1 to 5 augmentations will be produced from each sample"))
+    argparser.add_argument(
         '--hybrid',
         action='store_true',
         help='Enanble')
@@ -298,7 +323,7 @@ def main():
 
     args = argparser.parse_args()
     log_level = logging.DEBUG if args.debug else logging.INFO
-    logging.basicConfig(format='%(levelname)s: %(message)s', level=log_level)
+    logging.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log_level)
     logging.info('listening to server %s:%s', args.host, args.port)
     print(__doc__)
 

@@ -197,18 +197,19 @@ class IntersectionReader(object):
                 = junction_locations[is_uncontrolled_junction]
     
     def debug_display_intersections(self, carla_world):
+        display_time = 40.0
         for loc in self.controlled_junction_locations:
             carla_world.debug.draw_string(
                     util.ndarray_to_location(loc) + carla.Location(z=3.0),
                     'o',
                     color=carla.Color(r=255, g=0, b=0, a=100),
-                    life_time=10.0)
+                    life_time=display_time)
         for loc in self.uncontrolled_junction_locations:
             carla_world.debug.draw_string(
                     util.ndarray_to_location(loc) + carla.Location(z=3.0),
                     'o',
                     color=carla.Color(r=0, g=255, b=0, a=100),
-                    life_time=10.0)
+                    life_time=display_time)
 
     def at_intersection_to_label(self, actor):
         """Retrieve the label corresponding to the actor's location in the
@@ -237,11 +238,12 @@ class DataCollector(object):
             intersection_reader=None,
             save_frequency=10,
             save_directory='out',
-            burn_frames=60,
+            n_burn_frames=60,
             episode=0,
             exclude_samples=SampleLabelFilter(),
             phi_attributes=DEFAULT_PHI_ATTRIBUTES,
             should_augment=False,
+            n_augments=1,
             debug=False):
         """
         player_actor : carla.Vehicle
@@ -255,7 +257,7 @@ class DataCollector(object):
         self._intersection_reader = intersection_reader
         self.save_frequency = save_frequency
         self._save_directory = save_directory
-        self.burn_frames = burn_frames
+        self.n_burn_frames = n_burn_frames
         self.episode = episode
         self.exclude_samples = exclude_samples
         self._debug = debug
@@ -283,7 +285,7 @@ class DataCollector(object):
         #     Size of trajectory/lidar feed dict
         self._n_feeds = self.T + 1
         self.streaming_generator = generate_observation.StreamingGenerator(
-                self._phi, should_augment=should_augment)
+                self._phi, should_augment=should_augment, n_augments=n_augments)
         self.sensor = self._world.spawn_actor(
                 create_lidar_blueprint_v2(self._world),
                 carla.Transform(carla.Location(z=2.5)),
@@ -340,8 +342,8 @@ class DataCollector(object):
             ago relative to current frame."""
             if frame % self.save_frequency == 0:
                 """Save dataset every save_frequency steps."""
-                if frame - self._first_frame > self.burn_frames:
-                    """Skip the first number of burn_frames"""
+                if frame - self._first_frame > self.n_burn_frames:
+                    """Skip the first number of n_burn_frames"""
                     return True
         return False
     
@@ -395,12 +397,11 @@ class DataCollector(object):
             if self.exclude_samples.contains(key, val):
                 if self._debug:
                     self.debug_draw_red_player_bbox()
-                    logging.debug("filter")
+                    logging.debug("filter dataset sample")
                 return True
         
         if self._debug:
             self.debug_draw_green_player_bbox()
-            logging.debug("don't filter")
         return False
 
     def capture_step(self, frame):
