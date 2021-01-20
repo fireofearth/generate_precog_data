@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# TODO:
 python run.py \
     --dir /media/external/data/precog_generated_dataset/town05/unsorted \
     --augment-data \

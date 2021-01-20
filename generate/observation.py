@@ -185,6 +185,7 @@ class DrivingSample(object):
             agent_futures = np.reshape(agent_futures, (n_oagents, -1, 3))
 
             """Shift points about (x,y)-plane."""
+            ## can't get this to work right now.
             # unit = np.array([1,0,0])
             # angle = (np.random.sample()*2 - 1)*np.pi
             # mag = np.random.sample()*10

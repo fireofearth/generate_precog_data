@@ -28,7 +28,8 @@ For each map in the CARLA simulator, I run 4 episodes of data collection. For ea
 5. Git clone the PRECOG repository `https://github.com/fireofearth/precog` (no need to install deps for PRECOG).
 5. Double check the Bash exported paths in `generate_precog_data/env.sh` for PRECOG and CARLA are correct.
 6. `source generate_precog_data/env.sh`.
-7. Run the example collect data script `generate_precog_data/collect_data.sh`.
+7. (optional to watch vehicles in a map) run `python generate_precog_data/overhead_viewer.py`, press `Ctrl+Z` and then command `bg` in your terminal to have `overhead_viewer` run in the background.
+8. Run the example collect data script `generate_precog_data/collect_data.sh`.
 
 ```
 usage: run.py [-h] [-v] [--host H] [-p P] [--dir SAVE_DIRECTORY] [-s SEED]
