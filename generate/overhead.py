@@ -1,6 +1,8 @@
 import numpy as np
 import carla
-import generate.util as util
+
+import utility as util
+import carlautil
 
 def splat_points(points, splat_params, nd=2):
     meters_max = splat_params.meters_max
@@ -66,7 +68,7 @@ def get_normalized_sensor_data(lidar_measurement):
     matrix = np.array(transform_ccw.get_matrix())
     points = np.dot(matrix, points.T).T
     points = points[:, :3] \
-        + util.location_to_ndarray(carla.Location(z=2.5))
+        + carlautil.location_to_ndarray(carla.Location(z=2.5))
     points[:, 1] *= -1.0 
     return points
 

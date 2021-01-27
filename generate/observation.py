@@ -5,7 +5,8 @@ import scipy
 import pandas as pd
 import carla
 
-import generate.util as util
+import utility as util
+import carlautil
 import generate.overhead as generate_overhead
 import precog.utils.class_util as classu
 import precog.utils.tensor_util as tensoru
@@ -18,10 +19,10 @@ class PlayerObservation(object):
         returns IDs sorted by nearest to player first."""
         if radius is None:
             radius = self.radius
-        player_location = util.transform_to_location_ndarray(self.player_transform)
+        player_location = carlautil.transform_to_location_ndarray(self.player_transform)
         other_ids =  util.map_to_ndarray(lambda v: v.id, self.other_vehicles)
         other_locations = util.map_to_ndarray(
-                lambda v: util.transform_to_location_ndarray(v.get_transform()),
+                lambda v: carlautil.transform_to_location_ndarray(v.get_transform()),
                 self.other_vehicles)
         distances = np.linalg.norm(other_locations - player_location, axis=1)
         df = pd.DataFrame({ 'ids': other_ids, 'distances': distances })
@@ -67,11 +68,11 @@ class PlayerObservation(object):
         self.player_transform = player_transforms[-1]
 
         # player_positions_world : ndarray of shape (len(player_transforms), 3)
-        self.player_positions_world = util.transforms_to_location_ndarray(
+        self.player_positions_world = carlautil.transforms_to_location_ndarray(
                 self.player_transforms)
         # player_positions_local : ndarray of shape (len(player_transforms), 3)
         self.player_positions_local = self.player_positions_world \
-                - util.transform_to_location_ndarray(self.player_transform)
+                - carlautil.transform_to_location_ndarray(self.player_transform)
 
         if self.other_id_ordering is None:
             # get list of A agents within radius close to us
@@ -83,7 +84,7 @@ class PlayerObservation(object):
             others_transforms_list = [None] * len(self.others_transforms)
             for idx, others_transform in enumerate(self.others_transforms):
                 others_transforms_list[idx] = util.map_to_list(
-                        lambda aid: util.transform_to_location_ndarray(others_transform[aid]),
+                        lambda aid: carlautil.transform_to_location_ndarray(others_transform[aid]),
                         self.other_id_ordering)
 
             # agent_positions_world : ndarray of shape (A-1, len(self.others_transforms), 3)
@@ -96,7 +97,7 @@ class PlayerObservation(object):
             self.has_other_agents = False
 
         if self.n_missing > 0:
-            faraway = util.transform_to_location_ndarray(self.player_transform) + 500
+            faraway = carlautil.transform_to_location_ndarray(self.player_transform) + 500
             faraway_tile = np.tile(
                     faraway, (self.n_missing, len(self.others_transforms), 1))
             if self.n_missing == self.A - 1:
@@ -107,7 +108,7 @@ class PlayerObservation(object):
         
         # agent_positions_local : ndarray of shape (A-1, len(self.others_transforms), 3)
         self.agent_positions_local = self.agent_positions_world \
-                - util.transform_to_location_ndarray(self.player_transform)
+                - carlautil.transform_to_location_ndarray(self.player_transform)
 
     def copy_with_new_ordering(self, other_id_ordering):
         return PlayerObservation(self.frame, self.phi, self.world,
@@ -300,9 +301,9 @@ class StreamingGenerator(object):
         player_past = feed_dict.player_past
         agent_pasts = feed_dict.agent_pasts
         player_future = observation.player_positions_world[1:self.T+1, :3] \
-                - util.transform_to_location_ndarray(player_transform)
+                - carlautil.transform_to_location_ndarray(player_transform)
         agent_futures = observation.agent_positions_world[:, 1:self.T+1, :3] \
-                - util.transform_to_location_ndarray(player_transform)
+                - carlautil.transform_to_location_ndarray(player_transform)
 
         sample = DrivingSample(episode, frame, lidar_params,
                 sample_labels, save_directory,

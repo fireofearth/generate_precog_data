@@ -12,7 +12,8 @@ import carla
 
 import generate.overhead as generate_overhead
 import generate.observation as generate_observation
-import generate.util as util
+import utility as util
+import carlautil
 import precog.utils.class_util as classu
 import precog.utils.tensor_util as tensoru
 
@@ -182,21 +183,22 @@ class IntersectionReader(object):
     # degree threshold for sloped road.
     SLOPE_DEGREES = 5.0
     SLOPE_UDEGREES = (360. - SLOPE_DEGREES)
-    SLOPE_FIND_RADIUS = 20
+    SLOPE_FIND_RADIUS = 30
     # radius used to check whether junction has traffic lights
     TLIGHT_FIND_RADIUS = 25
     # radius used to check whether vehicle is in junction
-    TLIGHT_DETECT_RADIUS = 30
+    TLIGHT_DETECT_RADIUS = 28
 
     def __init__(self, carla_world, carla_map, debug=False):
         """
         """
+        self.carla_world = carla_world
         self._debug = debug
         """Generate slope topology of the map"""
         # get waypoints
         wps = carla_map.generate_waypoints(4.0)
         def h(wp):
-            loc = wp.transform.location
+            l = wp.transform.location
             pitch = wp.transform.rotation.pitch
             return np.array([l.x, l.y, l.z, pitch])
         loc_and_pitch_of_wps = util.map_to_ndarray(h, wps)
@@ -204,8 +206,8 @@ class IntersectionReader(object):
         self.wp_pitches = loc_and_pitch_of_wps[:, -1]
         self.wp_pitches = self.wp_pitches % 360.
         self.wp_is_sloped = np.logical_and(
-                self.SLOPE_DEGREES > self.wp_pitches,
-                self.wp_pitches < SLOPE_UDEGREES)
+                self.SLOPE_DEGREES < self.wp_pitches,
+                self.wp_pitches < self.SLOPE_UDEGREES)
         
         """Generate intersection topology of the map"""
         # get nodes in graph
@@ -213,14 +215,14 @@ class IntersectionReader(object):
         G = nx.Graph()
         G.add_edges_from(topology)
         tlights = util.filter_to_list(lambda a: 'traffic_light' in a.type_id,
-                carla_world.get_actors())
-        junctions = util.get_junctions_from_topology_graph(G)
+                self.carla_world.get_actors())
+        junctions = carlautil.get_junctions_from_topology_graph(G)
 
         tlight_distances = np.zeros((len(tlights), len(junctions),))
-        f = lambda j: util.location_to_ndarray(j.bounding_box.location)
+        f = lambda j: carlautil.location_to_ndarray(j.bounding_box.location)
         junction_locations = util.map_to_ndarray(f, junctions)
         
-        g = lambda tl: util.transform_to_location_ndarray(
+        g = lambda tl: carlautil.transform_to_location_ndarray(
                 tl.get_transform())
         tlight_locations = util.map_to_ndarray(g, tlights)
 
@@ -235,17 +237,17 @@ class IntersectionReader(object):
         self.uncontrolled_junction_locations \
                 = junction_locations[is_uncontrolled_junction]
     
-    def debug_display_intersections(self, carla_world):
+    def debug_display_intersections(self):
         display_time = 40.0
         for loc in self.controlled_junction_locations:
-            carla_world.debug.draw_string(
-                    util.ndarray_to_location(loc) + carla.Location(z=3.0),
+            self.carla_world.debug.draw_string(
+                    carlautil.ndarray_to_location(loc) + carla.Location(z=3.0),
                     'o',
                     color=carla.Color(r=255, g=0, b=0, a=100),
                     life_time=display_time)
         for loc in self.uncontrolled_junction_locations:
-            carla_world.debug.draw_string(
-                    util.ndarray_to_location(loc) + carla.Location(z=3.0),
+            self.carla_world.debug.draw_string(
+                    carlautil.ndarray_to_location(loc) + carla.Location(z=3.0),
                     'o',
                     color=carla.Color(r=0, g=255, b=0, a=100),
                     life_time=display_time)
@@ -254,7 +256,7 @@ class IntersectionReader(object):
         """
         TODO: make wp_locations size smaller. Don't need to check non-sloped waypoints.
         """
-        actor_location = util.actor_to_location_ndarray(actor)
+        actor_location = carlautil.actor_to_location_ndarray(actor)
         actor_xy = actor_location[:2]
         actor_z = actor_location[-1]
         upperbound_z = actor.bounding_box.extent.z * 2
@@ -262,24 +264,38 @@ class IntersectionReader(object):
         xy_distances_to_wps = np.linalg.norm(
             self.wp_locations[:, :2] - actor_xy, axis=1)
         z_displacement_to_wps = self.wp_locations[:, -1] - actor_z
+
+        """get waypoints close to vehicle filter"""
         wps_filter = np.logical_and(
                 xy_distances_to_wps < self.SLOPE_FIND_RADIUS,
                 np.logical_and(
                     z_displacement_to_wps < upperbound_z,
                     z_displacement_to_wps > lowerbound_z))
-        
-        ## extra slope information
+
+        #####
+        """obtain extra slope information"""
         wp_pitches = self.wp_pitches[wps_filter]
-        wp_pitches = np.min(
-                np.vstack((wp_pitches, np.abs(wp_pitches - 360.),)),
-                axis=0)
-        max_wp_pitch = np.max(wp_pitches)
-        ##
+        if wp_pitches.size == 0:
+            max_wp_pitch = 0.0
+        else:
+            wp_pitches = np.min(
+                    np.vstack((wp_pitches, np.abs(wp_pitches - 360.),)),
+                    axis=0)
+            max_wp_pitch = np.max(wp_pitches)
+        #####
+
+        if self._debug:
+            nearby_slopes = np.logical_and(
+                    self.wp_is_sloped == True,
+                    wps_filter)
+            for wp_location in self.wp_locations[nearby_slopes]:
+                loc = carlautil.ndarray_to_location(wp_location)
+                carlautil.debug_point(self.carla_world, loc)
 
         if np.any(self.wp_is_sloped[wps_filter]):
-            return ScenarioSlopeLabel.NONE, max_wp_pitch
-        else:
             return ScenarioSlopeLabel.SLOPES, max_wp_pitch
+        else:
+            return ScenarioSlopeLabel.NONE, max_wp_pitch
 
     def at_intersection_to_label(self, actor):
         """Retrieve the label corresponding to the actor's location in the
@@ -291,7 +307,7 @@ class IntersectionReader(object):
 
         Returns
         """
-        actor_location = util.actor_to_location_ndarray(actor)
+        actor_location = carlautil.actor_to_location_ndarray(actor)
         distances_to_uncontrolled = np.linalg.norm(
                 self.uncontrolled_junction_locations - actor_location, axis=1)
         if np.any(distances_to_uncontrolled < self.TLIGHT_DETECT_RADIUS):

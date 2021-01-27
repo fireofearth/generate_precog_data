@@ -21,11 +21,6 @@ import sys
 import time
 import numpy as np
 
-# sys.path.append(
-#     os.path.join(
-#         os.getenv('CARLA_DIR'),
-#         'PythonAPI/carla'))
-
 import carla
 from carla import VehicleLightState as vls
 SpawnActor = carla.command.SpawnActor
@@ -33,7 +28,6 @@ SetAutopilot = carla.command.SetAutopilot
 SetVehicleLightState = carla.command.SetVehicleLightState
 FutureActor = carla.command.FutureActor
 
-import generate.util as util
 from generate.data import (
         DataCollector, IntersectionReader, SampleLabelFilter,
         ScenarioIntersectionLabel, ScenarioSlopeLabel)
@@ -61,9 +55,9 @@ class DataGenerator(object):
         self.client.set_timeout(10.0)
         if self.args.map is None:
             self.world = self.client.get_world()
-            logging.info(f"Using the map {self.args.map}.")
-        else:
             logging.info(f"Using the current map.")
+        else:
+            logging.info(f"Using the map {self.args.map}.")
             self.world = self.client.load_world(self.args.map)
         self.carla_map = self.world.get_map()
         self.traffic_manager = self.client.get_trafficmanager(8000)        
@@ -213,7 +207,7 @@ class DataGenerator(object):
                 self.traffic_manager.set_hybrid_physics_mode(True)
             self.world.apply_settings(settings)
             if self.args.debug:
-                self.intersection_reader.debug_display_intersections(self.world)
+                self.intersection_reader.debug_display_intersections()
 
             for episode in range(self.n_episodes):
                 logging.info(f"Running episode {episode}.")
