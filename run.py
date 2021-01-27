@@ -140,7 +140,7 @@ class DataGenerator(object):
             vehicle_ids_to_watch = vehicle_ids[:idx] + vehicle_ids[idx + 1:]
             vehicle = self.world.get_actor(vehicle_id)
             data_collector = DataCollector(vehicle,
-                    intersection_reader=self.intersection_reader,
+                    self.intersection_reader,
                     save_directory=self.args.save_directory,
                     n_burn_frames=self.args.n_burn_frames,
                     exclude_samples=self.exclude_filter,

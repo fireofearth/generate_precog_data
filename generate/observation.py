@@ -289,7 +289,7 @@ class StreamingGenerator(object):
         earlier_frame = frame - self.T
         player_transform, other_id_ordering, \
                 feed_dict = trajectory_feeds[earlier_frame]
-        ## TODO: Maybe add some check to not save samplew without other agents. 
+        ## TODO: Maybe add some check to not save samples without other agents. 
         # if not observation.has_other_agents:
         #     logging.debug("Could not obtain other agents for this sample. Skipping.")
         #     return

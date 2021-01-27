@@ -193,10 +193,11 @@ class IntersectionReader(object):
         """
         """
         self.carla_world = carla_world
+        self.carla_map = carla_map
         self._debug = debug
         """Generate slope topology of the map"""
         # get waypoints
-        wps = carla_map.generate_waypoints(4.0)
+        wps = self.carla_map.generate_waypoints(4.0)
         def h(wp):
             l = wp.transform.location
             pitch = wp.transform.rotation.pitch
@@ -211,7 +212,7 @@ class IntersectionReader(object):
         
         """Generate intersection topology of the map"""
         # get nodes in graph
-        topology = carla_map.get_topology()
+        topology = self.carla_map.get_topology()
         G = nx.Graph()
         G.add_edges_from(topology)
         tlights = util.filter_to_list(lambda a: 'traffic_light' in a.type_id,
@@ -237,6 +238,10 @@ class IntersectionReader(object):
         self.uncontrolled_junction_locations \
                 = junction_locations[is_uncontrolled_junction]
     
+    @property
+    def map_name(self):
+        return self.carla_map.name
+
     def debug_display_intersections(self):
         display_time = 40.0
         for loc in self.controlled_junction_locations:
@@ -323,7 +328,7 @@ class DataCollector(object):
     """Data collector based on DIM."""
 
     def __init__(self, player_actor,
-            intersection_reader=None,
+            intersection_reader,
             save_frequency=10,
             save_directory='out',
             n_burn_frames=60,
@@ -354,8 +359,8 @@ class DataCollector(object):
         _, _, self.T_past, _ = tensoru.shape(self._phi.S_past_world_frame)
         self.B, self.A, self.T, self.D = tensoru.shape(self._phi.S_future_world_frame)
         self.B, self.H, self.W, self.C = tensoru.shape(self._phi.overhead_features)
-        self._make_sample_name = lambda frame : "ep{:03d}_agent{:03d}_frame{:08d}".format(
-                self.episode, self._player.id, frame)
+        self._make_sample_name = lambda frame : "{}/ep{:03d}/agent{:03d}/frame{:08d}".format(
+                self._intersection_reader.map_name, self.episode, self._player.id, frame)
         self._world = self._player.get_world()
         self._other_vehicles = list()
         self._trajectory_size = max(self.T, self.T_past) + 1
@@ -442,15 +447,10 @@ class DataCollector(object):
         -------
         SampleLabelMap
         """
-        if self._intersection_reader is not None:
-            intersection_type_label = self._intersection_reader \
-                    .at_intersection_to_label(self._player)
-            slope_type_label, slope_pitch = self._intersection_reader \
-                    .at_slope_to_label(self._player)
-        else:
-            intersection_type_label = ScenarioIntersectionLabel.NONE
-            slope_type_label = ScenarioSlopeLabel.NONE
-            slope_pitch = 0.0
+        intersection_type_label = self._intersection_reader \
+                .at_intersection_to_label(self._player)
+        slope_type_label, slope_pitch = self._intersection_reader \
+                .at_slope_to_label(self._player)
         return SampleLabelMap(
                 intersection_type=intersection_type_label,
                 slope_type=slope_type_label,
