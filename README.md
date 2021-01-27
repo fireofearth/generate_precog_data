@@ -31,6 +31,75 @@ For each map in the CARLA simulator, I run 4 episodes of data collection. For ea
 7. (optional to watch vehicles in a map) run `python generate_precog_data/overhead_viewer.py`, press `Ctrl+Z` and then command `bg` in your terminal to have `overhead_viewer` run in the background.
 8. Run the example collect data script `generate_precog_data/collect_data.sh`.
 
+See bottom of page for usage details.
+
+## Development notes.
+
+When
+
+```
+Rotation(pitch=-0.155394, yaw=-539.144165, roll=0.000000)
+Rotation(pitch=-0.155394, yaw=-539.144165, roll=0.000000)
+Rotation(pitch=4.523910, yaw=90.996475, roll=0.000000)
+Rotation(pitch=355.476105, yaw=270.996460, roll=0.000000)
+Rotation(pitch=7.322927, yaw=90.996475, roll=0.000000)
+Rotation(pitch=352.677063, yaw=270.996460, roll=0.000000)
+Rotation(pitch=10.121943, yaw=90.99640
+```
+
+```
+Rotation(pitch=-8.150680, yaw=90.996475, roll=0.000000)
+Rotation(pitch=368.150665, yaw=270.996460, roll=0.000000)
+Rotation(pitch=-11.125393, yaw=90.996475, roll=0.000000)
+Rotation(pitch=371.125397, yaw=270.996460, roll=0.000000)
+Rotation(pitch=-11.125393, yaw=90.996475, roll=0.000000)
+Rotation(pitch=371.125397, yaw=270.996460, roll=0.000000)
+Rotation(pitch=-11.125393, yaw=90.90
+```
+
+```
+Rotation(pitch=-4.718071, yaw=-178.772736, roll=0.000000)
+Rotation(pitch=364.718079, yaw=1.227264, roll=0.000000)
+Rotation(pitch=-7.280909, yaw=-178.772736, roll=0.000000)
+Rotation(pitch=367.280914, yaw=1.227264, roll=0.000000)
+Rotation(pitch=-9.843746, yaw=-178.772736, roll=0.000000)
+Rotation(pitch=369.843750, yaw=1.227264, roll=0.000000)
+Rotation(pitch=-12.406584, yaw=-178.70
+```
+
+[-0.155394, -0.155394, 4.523910, 355.476105, 7.322927, 352.677063, 10.121943]
+
+**Choosing the Pitch and LIDAR FOV**:
+
+- Town03
+`pitch=5` is sufficient to detect all slopes.
+No issue with small slopes.
+
+- Town04
+`pitch=4` gives some highway change lanes.
+`pitch=3` gives highway change lanes and some highways.
+`pitch=2` gives highway change lanes and large swaths of highways.
+Roads are not parallel to the horizon. Need to make sure road is not incorrectly classed as obstacles.
+One overhead road.
+
+- Town05
+`pitch=5` is sufficient to detect all slopes.
+No issue with small slopes.
+Many overhead bridges. Some overhanging trees.
+
+- Town06
+No issue with small slopes.
+No issues.
+
+- Town07
+`pitch=4` (`pitch` 4.4 and under) detects minor slopes.
+
+- Town10HD
+No issue with small slopes.
+Low trees. One overhead bridge.
+
+## Usage in depth.
+
 ```
 usage: run.py [-h] [-v] [--host H] [-p P] [--dir SAVE_DIRECTORY] [-s SEED]
               [--map MAP] [-e E] [-f F] [-b B] [-n N] [-d D] [--augment-data]

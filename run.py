@@ -21,10 +21,10 @@ import sys
 import time
 import numpy as np
 
-sys.path.append(
-    os.path.join(
-        os.getenv('CARLA_DIR'),
-        'PythonAPI/carla'))
+# sys.path.append(
+#     os.path.join(
+#         os.getenv('CARLA_DIR'),
+#         'PythonAPI/carla'))
 
 import carla
 from carla import VehicleLightState as vls
@@ -36,7 +36,7 @@ FutureActor = carla.command.FutureActor
 import generate.util as util
 from generate.data import (
         DataCollector, IntersectionReader, SampleLabelFilter,
-        ScenarioIntersectionLabel)
+        ScenarioIntersectionLabel, ScenarioSlopeLabel)
 
 class DataGenerator(object):
 
@@ -72,7 +72,8 @@ class DataGenerator(object):
         
         # filtering out controlled intersections
         self.exclude_filter = SampleLabelFilter(
-                intersection_type=[ScenarioIntersectionLabel.CONTROLLED])
+                intersection_type=[ScenarioIntersectionLabel.CONTROLLED],
+                slope_type=[ScenarioSlopeLabel.SLOPES])
 
     def _setup_actors(self, episode):
         """Setup vehicles and data collectors for an episode.
@@ -237,7 +238,7 @@ def dir_path(s):
 
 def main():
     """Main method"""
-
+    
     argparser = argparse.ArgumentParser(
         description='CARLA Automatic Control Client')
     argparser.add_argument(

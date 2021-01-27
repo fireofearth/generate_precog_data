@@ -53,12 +53,24 @@ class ScenarioIntersectionLabel(object):
     #     Vehicle is near a controlled intersection
     CONTROLLED = 'CONTROLLED'
 
+class ScenarioSlopeLabel(object):
+    """Labels samples by proximity of vehicle to slopes."""
+
+    # NONE : str
+    #     Vehicle is not near any intersections
+    NONE = 'NONE'
+    # SLOPES : str
+    #     Vehicle is close or on a sloped road
+    SLOPES = 'SLOPES'
+
 class SampleLabelMap(object):
     """Container of sample labels, categorized by different types."""
     
     @classu.member_initialize
     def __init__(self,
-            intersection_type=ScenarioIntersectionLabel.NONE):
+            intersection_type=ScenarioIntersectionLabel.NONE,
+            slope_type=ScenarioSlopeLabel.NONE,
+            slope_pitch=0.0):
         pass
 
 class SampleLabelFilter(object):
@@ -66,11 +78,13 @@ class SampleLabelFilter(object):
 
     @classu.member_initialize
     def __init__(self,
-            intersection_type=[]):
+            intersection_type=[],
+            slope_type=[]):
         """
         Parameters
         ----------
         intersection_type : list of str
+        slope_type : list of str
         """
         pass
 
@@ -159,16 +173,41 @@ def create_lidar_blueprint_v2(world):
     return lidar_bp
 
 class IntersectionReader(object):
-    """Used to keep track of intersections in map and check whether
-    an action is in an intersection."""
+    """
+    Used to keep track of properties in a map and used to query whether
+    an actor is in a certain part (i.e. intersection, hill) of the map.
+    Note: bad naming. Class should be named MapReader or something more general.
+    """
 
+    # degree threshold for sloped road.
+    SLOPE_DEGREES = 5.0
+    SLOPE_UDEGREES = (360. - SLOPE_DEGREES)
+    SLOPE_FIND_RADIUS = 20
     # radius used to check whether junction has traffic lights
-    FIND_RADIUS = 25
+    TLIGHT_FIND_RADIUS = 25
     # radius used to check whether vehicle is in junction
-    DETECT_RADIUS = 30
+    TLIGHT_DETECT_RADIUS = 30
 
     def __init__(self, carla_world, carla_map, debug=False):
+        """
+        """
         self._debug = debug
+        """Generate slope topology of the map"""
+        # get waypoints
+        wps = carla_map.generate_waypoints(4.0)
+        def h(wp):
+            loc = wp.transform.location
+            pitch = wp.transform.rotation.pitch
+            return np.array([l.x, l.y, l.z, pitch])
+        loc_and_pitch_of_wps = util.map_to_ndarray(h, wps)
+        self.wp_locations = loc_and_pitch_of_wps[:, :-1]
+        self.wp_pitches = loc_and_pitch_of_wps[:, -1]
+        self.wp_pitches = self.wp_pitches % 360.
+        self.wp_is_sloped = np.logical_and(
+                self.SLOPE_DEGREES > self.wp_pitches,
+                self.wp_pitches < SLOPE_UDEGREES)
+        
+        """Generate intersection topology of the map"""
         # get nodes in graph
         topology = carla_map.get_topology()
         G = nx.Graph()
@@ -189,7 +228,7 @@ class IntersectionReader(object):
             tlight_distances[:,idx] = np.linalg.norm(
                     tlight_locations - junction_locations[idx], axis=1)
 
-        is_controlled_junction = (tlight_distances < self.FIND_RADIUS).any(axis=0)
+        is_controlled_junction = (tlight_distances < self.TLIGHT_FIND_RADIUS).any(axis=0)
         is_uncontrolled_junction = np.logical_not(is_controlled_junction)
         self.controlled_junction_locations \
                 = junction_locations[is_controlled_junction]
@@ -211,6 +250,37 @@ class IntersectionReader(object):
                     color=carla.Color(r=0, g=255, b=0, a=100),
                     life_time=display_time)
 
+    def at_slope_to_label(self, actor):
+        """
+        TODO: make wp_locations size smaller. Don't need to check non-sloped waypoints.
+        """
+        actor_location = util.actor_to_location_ndarray(actor)
+        actor_xy = actor_location[:2]
+        actor_z = actor_location[-1]
+        upperbound_z = actor.bounding_box.extent.z * 2
+        lowerbound_z = actor.bounding_box.extent.z - 1
+        xy_distances_to_wps = np.linalg.norm(
+            self.wp_locations[:, :2] - actor_xy, axis=1)
+        z_displacement_to_wps = self.wp_locations[:, -1] - actor_z
+        wps_filter = np.logical_and(
+                xy_distances_to_wps < self.SLOPE_FIND_RADIUS,
+                np.logical_and(
+                    z_displacement_to_wps < upperbound_z,
+                    z_displacement_to_wps > lowerbound_z))
+        
+        ## extra slope information
+        wp_pitches = self.wp_pitches[wps_filter]
+        wp_pitches = np.min(
+                np.vstack((wp_pitches, np.abs(wp_pitches - 360.),)),
+                axis=0)
+        max_wp_pitch = np.max(wp_pitches)
+        ##
+
+        if np.any(self.wp_is_sloped[wps_filter]):
+            return ScenarioSlopeLabel.NONE, max_wp_pitch
+        else:
+            return ScenarioSlopeLabel.SLOPES, max_wp_pitch
+
     def at_intersection_to_label(self, actor):
         """Retrieve the label corresponding to the actor's location in the
         map based on proximity to intersections.
@@ -218,15 +288,17 @@ class IntersectionReader(object):
         Parameters
         ----------
         actor : carla.Actor
+
+        Returns
         """
         actor_location = util.actor_to_location_ndarray(actor)
         distances_to_uncontrolled = np.linalg.norm(
                 self.uncontrolled_junction_locations - actor_location, axis=1)
-        if np.any(distances_to_uncontrolled < self.DETECT_RADIUS):
+        if np.any(distances_to_uncontrolled < self.TLIGHT_DETECT_RADIUS):
             return ScenarioIntersectionLabel.UNCONTROLLED
         distances_to_controlled = np.linalg.norm(
                 self.controlled_junction_locations - actor_location, axis=1)
-        if np.any(distances_to_controlled < self.DETECT_RADIUS):
+        if np.any(distances_to_controlled < self.TLIGHT_DETECT_RADIUS):
             return ScenarioIntersectionLabel.CONTROLLED
         return ScenarioIntersectionLabel.NONE
 
@@ -357,10 +429,16 @@ class DataCollector(object):
         if self._intersection_reader is not None:
             intersection_type_label = self._intersection_reader \
                     .at_intersection_to_label(self._player)
+            slope_type_label, slope_pitch = self._intersection_reader \
+                    .at_slope_to_label(self._player)
         else:
             intersection_type_label = ScenarioIntersectionLabel.NONE
+            slope_type_label = ScenarioSlopeLabel.NONE
+            slope_pitch = 0.0
         return SampleLabelMap(
-                intersection_type=intersection_type_label)
+                intersection_type=intersection_type_label,
+                slope_type=slope_type_label,
+                slope_pitch=slope_pitch)
 
     def debug_draw_red_player_bbox(self):
         self._world.debug.draw_box(
