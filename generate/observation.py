@@ -14,9 +14,33 @@ import precog.utils.tfutil as tfutil
 
 class PlayerObservation(object):
 
+    def get_nearby_agent_ids_v2(sefl, radius=None):
+        if radius is None:
+            radius = self.radius
+        player_location = carlautil.transform_to_location_ndarray(self.player_transform)
+        upperbound_z = player_bbox.extent.z * 2
+        lowerbound_z = - 1
+        other_ids =  util.map_to_ndarray(lambda v: v.id, self.other_vehicles)
+        other_locations = util.map_to_ndarray(
+                lambda v: carlautil.transform_to_location_ndarray(v.get_transform()),
+                self.other_vehicles)
+        distances = np.linalg.norm(other_locations - player_location, axis=1)
+        z_displacements = other_locations[:, -1] - player_location[-1]
+        df = pd.DataFrame({
+                'ids': other_ids,
+                'distances': distances,
+                'z_displacements': z_displacements })
+        df = df[df['distances'] < radius]
+        df = df[df['z_displacements'].between(lowerbound_z, upperbound_z, inclusive=False)]
+        df.sort_values('distances', inplace=True)
+        return df['ids'].to_numpy()
+
     def get_nearby_agent_ids(self, radius=None):
         """Gets all IDs of other vehicles that are radius away from ego vehicle and
-        returns IDs sorted by nearest to player first."""
+        returns IDs sorted by nearest to player first.
+        
+        TODO: don't include other vehicles below / above th ego vehicle
+        """
         if radius is None:
             radius = self.radius
         player_location = carlautil.transform_to_location_ndarray(self.player_transform)
@@ -32,7 +56,7 @@ class PlayerObservation(object):
 
     @classu.member_initialize
     def __init__(self, frame, phi, world, other_vehicles,
-            player_transforms, others_transforms,
+            player_transforms, others_transforms, player_bbox,
             other_id_ordering=None, radius=200):
         """
         1. generates a history of player and other vehicle position coordinates
@@ -113,16 +137,17 @@ class PlayerObservation(object):
     def copy_with_new_ordering(self, other_id_ordering):
         return PlayerObservation(self.frame, self.phi, self.world,
                 self.other_vehicles, self.player_transforms,
-                self.others_transforms,
+                self.others_transforms, self.player_bbox,
                 other_id_ordering=other_id_ordering, radius=self.radius)
 
 
 class DrivingSample(object):
-    """Represents a dataset sample. Used for data augmentation."""
+    """Represents a dataset sample. Responsible for further preprocessing of data.
+    Used for data augmentation."""
 
     @classu.member_initialize
     def __init__(self, episode, frame, lidar_params, sample_labels,
-            save_directory, sample_name, lidar_points, player_bbox,
+            save_directory, sample_name, lidar_measurement, player_bbox,
             player_past, agent_pasts, player_future, agent_futures,
             should_augment=False, n_augments=1):
         """
@@ -130,8 +155,8 @@ class DrivingSample(object):
         ----------
         sample_name : str
             File name without extension to name sample.
-        lidar_points : np.array
-            LIDAR points; np.array of shape (number of points, 3).
+        lidar_measurement : carla.LidarMeasurement or carla.SemanticLidarMeasurement
+            LIDAR capture to add to sample.
         player_past : np.array
             Player past trajectory; np.array of shape (T_past, 3).
         agent_pasts : np.array
@@ -139,12 +164,17 @@ class DrivingSample(object):
         player_future
         agent_futures
         """
-        pass
+        # lidar_points : np.array
+        #     Has shape (number of points, 3) if using carla.LidarMeasurement.
+        # lidar_point_labels : np.array
+        self.lidar_points, self.lidar_point_labels \
+                = generate_overhead.get_normalized_sensor_data(lidar_measurement)
 
     def _save_sample(self, sample_name, lidar_points, player_past,
             agent_pasts, player_future, agent_futures):
         overhead_features = generate_overhead.build_BEV(
-                lidar_points, self.lidar_params, self.player_bbox)
+                lidar_points, self.lidar_params, self.player_bbox,
+                lidar_point_labels=self.lidar_point_labels)
         player_past = player_past[:, :2]
         agent_pasts = agent_pasts[:, :, :2]
         player_future = player_future[:, :2]
@@ -295,9 +325,6 @@ class StreamingGenerator(object):
         #     return
         observation = observation.copy_with_new_ordering(other_id_ordering)
         lidar_measurement = lidar_feeds[earlier_frame]
-
-        lidar_points = generate_overhead.get_normalized_sensor_data(
-                lidar_measurement)
         player_past = feed_dict.player_past
         agent_pasts = feed_dict.agent_pasts
         player_future = observation.player_positions_world[1:self.T+1, :3] \
@@ -308,7 +335,7 @@ class StreamingGenerator(object):
         sample = DrivingSample(episode, frame, lidar_params,
                 sample_labels, save_directory,
                 make_sample_name(earlier_frame),
-                lidar_points, player_bbox, player_past,
+                lidar_measurement, player_bbox, player_past,
                 agent_pasts,
                 player_future, agent_futures,
                 should_augment=self.should_augment,

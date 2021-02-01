@@ -1,8 +1,8 @@
 #!/bin/bash
 
 SAVEDIR=/media/external/data/precog_generate/datasets/20210127
+    # --dir $SAVEDIR \
 python run.py \
-    --dir $SAVEDIR \
     --augment-data \
     --n-vehicles 120 \
     --n-frames 1500 \

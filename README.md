@@ -80,6 +80,8 @@ No issue with small slopes.
 Roads are not parallel to the horizon. Need to make sure road is not incorrectly classed as obstacles.
 One overhead road.
 
+`pitch=0.5` highway before bridge and change lanes
+
 - Town05
 `pitch=5` is sufficient to detect all slopes.
 No issue with small slopes.
