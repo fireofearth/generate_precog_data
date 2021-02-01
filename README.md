@@ -67,8 +67,6 @@ Rotation(pitch=369.843750, yaw=1.227264, roll=0.000000)
 Rotation(pitch=-12.406584, yaw=-178.70
 ```
 
-[-0.155394, -0.155394, 4.523910, 355.476105, 7.322927, 352.677063, 10.121943]
-
 **Choosing the Pitch and LIDAR FOV**:
 
 - Town03

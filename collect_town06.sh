@@ -1,8 +1,9 @@
 #!/bin/bash
 
 # twice as many episodes for half the time
+SAVEDIR=/media/external/data/precog_generate/datasets/20210127
 python run.py \
-    --dir /media/external/data/precog_generated_dataset/town06/unsorted \
+    --dir $SAVEDIR \
     --augment-data \
     --n-vehicles 130 \
     --n-episodes 20 \

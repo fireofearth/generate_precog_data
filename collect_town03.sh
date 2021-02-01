@@ -1,5 +1,7 @@
 #!/bin/bash
 
-python run.py --dir /media/external/data/precog_generated_dataset/town03/unsorted \
+SAVEDIR=/media/external/data/precog_generate/datasets/20210127
+python run.py \
+    --dir $SAVEDIR \
     --augment-data \
     --map Town03 \

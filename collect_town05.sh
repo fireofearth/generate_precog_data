@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# TODO:
+SAVEDIR=/media/external/data/precog_generate/datasets/20210127
 python run.py \
-    --dir /media/external/data/precog_generated_dataset/town05/unsorted \
+    --dir $SAVEDIR \
     --augment-data \
     --n-vehicles 120 \
     --n-frames 1500 \

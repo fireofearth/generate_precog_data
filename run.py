@@ -269,7 +269,7 @@ def main():
     argparser.add_argument(
         '-e', '--n-episodes',
         metavar='E',
-        default=10,
+        default=11,
         type=int,
         help='Number of episodes to run (default: 10)')
     argparser.add_argument(

@@ -258,8 +258,10 @@ class IntersectionReader(object):
                     life_time=display_time)
 
     def at_slope_to_label(self, actor):
-        """
-        TODO: make wp_locations size smaller. Don't need to check non-sloped waypoints.
+        """Check wheter actor (i.e. vehicle) is near a slope,
+        returning a ScenarioSlopeLabel.
+
+        TODO: make wp_locations array size smaller after debugging. Don't need to check non-sloped waypoints.
         """
         actor_location = carlautil.actor_to_location_ndarray(actor)
         actor_xy = actor_location[:2]
