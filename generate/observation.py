@@ -14,12 +14,14 @@ import precog.utils.tfutil as tfutil
 
 class PlayerObservation(object):
 
-    def get_nearby_agent_ids_v2(sefl, radius=None):
+    def __get_nearby_agent_ids(self, radius=None):
         if radius is None:
             radius = self.radius
         player_location = carlautil.transform_to_location_ndarray(self.player_transform)
-        upperbound_z = player_bbox.extent.z * 2
-        lowerbound_z = - 1
+        """When there are road above / below ego vehicle,
+        then we don't want to include them."""
+        upperbound_z = 4
+        lowerbound_z = -4
         other_ids =  util.map_to_ndarray(lambda v: v.id, self.other_vehicles)
         other_locations = util.map_to_ndarray(
                 lambda v: carlautil.transform_to_location_ndarray(v.get_transform()),
@@ -35,11 +37,12 @@ class PlayerObservation(object):
         df.sort_values('distances', inplace=True)
         return df['ids'].to_numpy()
 
-    def get_nearby_agent_ids(self, radius=None):
+    def old_get_nearby_agent_ids(self, radius=None):
         """Gets all IDs of other vehicles that are radius away from ego vehicle and
         returns IDs sorted by nearest to player first.
         
         TODO: don't include other vehicles below / above th ego vehicle
+        TODO: delete
         """
         if radius is None:
             radius = self.radius
@@ -101,7 +104,7 @@ class PlayerObservation(object):
         if self.other_id_ordering is None:
             # get list of A agents within radius close to us
             # note that other_id_ordering may have size smaller than A-1
-            ids = self.get_nearby_agent_ids()
+            ids = self.__get_nearby_agent_ids()
             self.other_id_ordering = ids[:self.A - 1]
 
         if self.other_id_ordering.shape != (0,):
@@ -133,6 +136,10 @@ class PlayerObservation(object):
         # agent_positions_local : ndarray of shape (A-1, len(self.others_transforms), 3)
         self.agent_positions_local = self.agent_positions_world \
                 - carlautil.transform_to_location_ndarray(self.player_transform)
+    
+    @property
+    def n_present(self):
+        return self.A - self.n_missing
 
     def copy_with_new_ordering(self, other_id_ordering):
         return PlayerObservation(self.frame, self.phi, self.world,
@@ -163,12 +170,20 @@ class DrivingSample(object):
             Agent pasts trajectory; np.array of shape (A-1, T_past, 3).
         player_future
         agent_futures
+
+        Add more augmentations, add dropout and noise to semantic LIDAR.
         """
         # lidar_points : np.array
         #     Has shape (number of points, 3) if using carla.LidarMeasurement.
         # lidar_point_labels : np.array
+        #     Labels for the LIDAR points. Each row should correspond to the same
+        #     row in lidar_points
         self.lidar_points, self.lidar_point_labels \
                 = generate_overhead.get_normalized_sensor_data(lidar_measurement)
+        if isinstance(lidar_measurement, carla.SemanticLidarMeasurement):
+            """Semantic LIDAR does not come with dropout or noise"""
+            self.lidar_points += np.random.uniform(
+                    -0.05, 0.05, size=self.lidar_points.shape)
 
     def _save_sample(self, sample_name, lidar_points, player_past,
             agent_pasts, player_future, agent_futures):
@@ -331,6 +346,7 @@ class StreamingGenerator(object):
                 - carlautil.transform_to_location_ndarray(player_transform)
         agent_futures = observation.agent_positions_world[:, 1:self.T+1, :3] \
                 - carlautil.transform_to_location_ndarray(player_transform)
+        sample_labels.n_present = observation.n_present
 
         sample = DrivingSample(episode, frame, lidar_params,
                 sample_labels, save_directory,

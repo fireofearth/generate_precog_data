@@ -71,7 +71,8 @@ class SampleLabelMap(object):
     def __init__(self,
             intersection_type=ScenarioIntersectionLabel.NONE,
             slope_type=ScenarioSlopeLabel.NONE,
-            slope_pitch=0.0):
+            slope_pitch=0.0,
+            n_present="NONE"):
         pass
 
 class SampleLabelFilter(object):
@@ -173,20 +174,20 @@ def create_lidar_blueprint_v2(world):
     lidar_bp.set_attribute('lower_fov', '-30.0')
     return lidar_bp
 
-def create_semantic_lidar_blueprint_v2(world):
-    """
+def create_semantic_lidar_blueprint(world):
+    """Construct a semantic LIDAR sensor blueprint.
 
     TODO: semantic LIDAR does not have dropoff or noise.
-    Will have to add that in.
+    Will have to mock this in the preprocessesing stage.
     """
     bp_library = world.get_blueprint_library()
     lidar_bp = bp_library.find('sensor.lidar.ray_cast_semantic')
     lidar_bp.set_attribute('channels', '48')
-    lidar_bp.set_attribute('range', '60')
+    lidar_bp.set_attribute('range', '100')
     lidar_bp.set_attribute('points_per_second', '100000')
     lidar_bp.set_attribute('rotation_frequency', '10.0')
     lidar_bp.set_attribute('upper_fov', '10.0')
-    lidar_bp.set_attribute('lower_fov', '-30.0')
+    lidar_bp.set_attribute('lower_fov', '-20.0')
     return lidar_bp
 
 class IntersectionReader(object):
@@ -277,16 +278,15 @@ class IntersectionReader(object):
         """Check wheter actor (i.e. vehicle) is near a slope,
         returning a ScenarioSlopeLabel.
 
-        TODO: make wp_locations array size smaller after debugging. Don't need to check non-sloped waypoints.
-        TODO: fix calculation of lowerbound_z. Should be
-        # one meter
-        lowerbound_z = -1
+        TODO: make wp_locations array size smaller after debugging.
+        Don't need to check non-sloped waypoints.
         """
         actor_location = carlautil.actor_to_location_ndarray(actor)
         actor_xy = actor_location[:2]
         actor_z = actor_location[-1]
+        """Want to ignore waypoints above and below (i.e. in the case actor is on a bridge)."""
         upperbound_z = actor.bounding_box.extent.z * 2
-        lowerbound_z = - 1
+        lowerbound_z = -1
         xy_distances_to_wps = np.linalg.norm(
             self.wp_locations[:, :2] - actor_xy, axis=1)
         z_displacement_to_wps = self.wp_locations[:, -1] - actor_z
@@ -357,7 +357,7 @@ class DataCollector(object):
     
     def __create_segmentation_lidar_sensor(self):
         return self._world.spawn_actor(
-                create_semantic_lidar_blueprint_v2(self._world),
+                create_semantic_lidar_blueprint(self._world),
                 carla.Transform(carla.Location(z=2.5)),
                 attach_to=self._player,
                 attachment_type=carla.AttachmentType.Rigid)

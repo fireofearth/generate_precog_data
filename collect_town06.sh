@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # twice as many episodes for half the time
-SAVEDIR=/media/external/data/precog_generate/datasets/20210127
+SAVEDIR=/media/external/data/precog_generate/datasets/20210201
 python run.py \
     --dir $SAVEDIR \
     --augment-data \
