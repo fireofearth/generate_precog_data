@@ -177,17 +177,17 @@ def create_lidar_blueprint_v2(world):
 def create_semantic_lidar_blueprint(world):
     """Construct a semantic LIDAR sensor blueprint.
 
-    TODO: semantic LIDAR does not have dropoff or noise.
-    Will have to mock this in the preprocessesing stage.
+    Note: semantic LIDAR does not have dropoff or noise.
+    May have to mock this in the preprocessesing stage.
     """
     bp_library = world.get_blueprint_library()
     lidar_bp = bp_library.find('sensor.lidar.ray_cast_semantic')
-    lidar_bp.set_attribute('channels', '48')
+    lidar_bp.set_attribute('channels', '32')
     lidar_bp.set_attribute('range', '100')
     lidar_bp.set_attribute('points_per_second', '100000')
     lidar_bp.set_attribute('rotation_frequency', '10.0')
     lidar_bp.set_attribute('upper_fov', '10.0')
-    lidar_bp.set_attribute('lower_fov', '-20.0')
+    lidar_bp.set_attribute('lower_fov', '-30.0')
     return lidar_bp
 
 class IntersectionReader(object):

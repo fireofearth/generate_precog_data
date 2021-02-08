@@ -159,7 +159,7 @@ def get_occupancy_grid(points, lidar_params, player_bbox, labels):
     """
     # tag points above 0.06 meters as non-road obstacles.
     z_threshold = 0.06
-    # tage points above vehicle as above obstacles.
+    # tag points above vehicle as above obstacles.
     z_threshold_second_above = player_bbox.extent.z * 2 + 0.5
     road_mask = np.logical_or(labels == 6, labels == 7)
     below_mask = np.logical_or(road_mask, points[:, 2] <= z_threshold)

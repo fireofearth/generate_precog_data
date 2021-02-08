@@ -60,7 +60,7 @@ class PlayerObservation(object):
     @classu.member_initialize
     def __init__(self, frame, phi, world, other_vehicles,
             player_transforms, others_transforms, player_bbox,
-            other_id_ordering=None, radius=200):
+            other_id_ordering=None, radius=100):
         """
         1. generates a history of player and other vehicle position coordinates
            of size len(player_transforms)
@@ -100,6 +100,8 @@ class PlayerObservation(object):
         # player_positions_local : ndarray of shape (len(player_transforms), 3)
         self.player_positions_local = self.player_positions_world \
                 - carlautil.transform_to_location_ndarray(self.player_transform)
+        # player_yaw : float
+        self.player_yaw = carlautil.transform_to_yaw(self.player_transform)
 
         if self.other_id_ordering is None:
             # get list of A agents within radius close to us
@@ -108,30 +110,41 @@ class PlayerObservation(object):
             self.other_id_ordering = ids[:self.A - 1]
 
         if self.other_id_ordering.shape != (0,):
-            others_transforms_list = [None] * len(self.others_transforms)
+            others_positions_list = [None] * len(self.others_transforms)
             for idx, others_transform in enumerate(self.others_transforms):
-                others_transforms_list[idx] = util.map_to_list(
+                others_positions_list[idx] = util.map_to_list(
                         lambda aid: carlautil.transform_to_location_ndarray(others_transform[aid]),
                         self.other_id_ordering)
 
             # agent_positions_world : ndarray of shape (A-1, len(self.others_transforms), 3)
-            self.agent_positions_world = np.array(others_transforms_list).transpose(1, 0, 2)
+            self.agent_positions_world = np.array(others_positions_list).transpose(1, 0, 2)
+
+            others_transform = self.others_transforms[-1]
+            # agent_yaws : ndarray of shape (A-1,)
+            self.agent_yaws = util.map_to_ndarray(
+                    lambda aid: carlautil.transform_to_yaw(others_transform[aid]),
+                    self.other_id_ordering)
+
             self.n_missing = max(self.A - 1 - self.agent_positions_world.shape[0], 0)
             self.has_other_agents = True
         else:
             self.agent_positions_world = np.array([])
+            self.agent_yaws = np.array([])
             self.n_missing = self.A - 1
             self.has_other_agents = False
 
         if self.n_missing > 0:
-            faraway = carlautil.transform_to_location_ndarray(self.player_transform) + 500
+            faraway_position = carlautil.transform_to_location_ndarray(self.player_transform) + 500
             faraway_tile = np.tile(
-                    faraway, (self.n_missing, len(self.others_transforms), 1))
+                    faraway_position, (self.n_missing, len(self.others_transforms), 1))
             if self.n_missing == self.A - 1:
                 self.agent_positions_world = faraway_tile
+                self.agent_yaws = np.zeros(self.A-1)
             else:
                 self.agent_positions_world = np.concatenate(
-                    (self.agent_positions_world, faraway_tile), axis=0)
+                        (self.agent_positions_world, faraway_tile), axis=0)
+                self.agent_yaws = np.concatenate(
+                        (self.agent_yaws, np.zeros(self.n_missing)), axis=0)
         
         # agent_positions_local : ndarray of shape (A-1, len(self.others_transforms), 3)
         self.agent_positions_local = self.agent_positions_world \
@@ -156,6 +169,7 @@ class DrivingSample(object):
     def __init__(self, episode, frame, lidar_params, sample_labels,
             save_directory, sample_name, lidar_measurement, player_bbox,
             player_past, agent_pasts, player_future, agent_futures,
+            player_yaw, agent_yaws,
             should_augment=False, n_augments=1):
         """
         Parameters
@@ -180,13 +194,15 @@ class DrivingSample(object):
         #     row in lidar_points
         self.lidar_points, self.lidar_point_labels \
                 = generate_overhead.get_normalized_sensor_data(lidar_measurement)
-        if isinstance(lidar_measurement, carla.SemanticLidarMeasurement):
-            """Semantic LIDAR does not come with dropout or noise"""
-            self.lidar_points += np.random.uniform(
-                    -0.05, 0.05, size=self.lidar_points.shape)
+        # uncomment to add rudimentary gaussian noise to lidar points
+        # if isinstance(lidar_measurement, carla.SemanticLidarMeasurement):
+        #     """Semantic LIDAR does not come with dropout or noise"""
+        #     self.lidar_points += np.random.uniform(
+        #             -0.05, 0.05, size=self.lidar_points.shape)
 
     def _save_sample(self, sample_name, lidar_points, player_past,
-            agent_pasts, player_future, agent_futures):
+            agent_pasts, player_future, agent_futures,
+            player_yaw, agent_yaws):
         overhead_features = generate_overhead.build_BEV(
                 lidar_points, self.lidar_params, self.player_bbox,
                 lidar_point_labels=self.lidar_point_labels)
@@ -204,6 +220,8 @@ class DrivingSample(object):
         datum['overhead_features'] = overhead_features
         datum['player_future'] = player_future
         datum['agent_futures'] = agent_futures
+        datum['player_yaw'] = player_yaw
+        datum['agent_yaws'] = agent_yaws
         datum['labels'] = vars(self.sample_labels)
         util.save_datum(datum, self.save_directory, sample_name)
 
@@ -215,6 +233,7 @@ class DrivingSample(object):
             sample_name = f"{self.sample_name}_aug{idx}"
 
             """Rotation about origin."""
+            # why am I using revrotmat instead of rotmat
             angle = (np.random.sample()*2 - 1)*np.pi
             rotmat = R.from_rotvec(np.array([0, 0, -1]) * angle).as_matrix()
             revrotmat = R.from_rotvec(np.array([0, 0, 1]) * angle).as_matrix()
@@ -229,6 +248,8 @@ class DrivingSample(object):
             agent_futures = np.reshape(self.agent_futures, (-1, 3))
             agent_futures = (rotmat @ agent_futures.T).T
             agent_futures = np.reshape(agent_futures, (n_oagents, -1, 3))
+            player_yaw = self.player_yaw + angle
+            agent_yaws = self.agent_yaws + angle
 
             """Shift points about (x,y)-plane."""
             ## can't get this to work right now.
@@ -246,14 +267,16 @@ class DrivingSample(object):
             # agent_futures = agent_futures + shift
 
             self._save_sample(sample_name, lidar_points, player_past,
-                    agent_pasts, player_future, agent_futures)
+                    agent_pasts, player_future, agent_futures,
+                    player_yaw, agent_yaws)
 
     def save(self):
         if self.should_augment:
             self._generate_augmentations()
         else:
             self._save_sample(self.sample_name, self.lidar_points, self.player_past,
-                    self.agent_pasts, self.player_future, self.agent_futures)
+                    self.agent_pasts, self.player_future, self.agent_futures,
+                    self.player_yaw, self.agent_yaws)
 
 
 class StreamingGenerator(object):
@@ -283,9 +306,14 @@ class StreamingGenerator(object):
         """
         player_past = observation.player_positions_local[-self.T_past:, :3]
         agent_pasts = observation.agent_positions_local[:, -self.T_past:, :3]
+        player_yaw = observation.player_yaw
+        agent_yaws = observation.agent_yaws
+
         feed_dict = attrdict.AttrDict({
                 'player_past': player_past,
-                'agent_pasts': agent_pasts})
+                'agent_pasts': agent_pasts,
+                'player_yaw': player_yaw,
+                'agent_yaws': agent_yaws})
 
         # not sure how agent_presence is being used to train PRECOG
         # agent_presence = np.ones(shape=tensoru.shape(phi.agent_presence), dtype=np.float32)
@@ -342,18 +370,29 @@ class StreamingGenerator(object):
         lidar_measurement = lidar_feeds[earlier_frame]
         player_past = feed_dict.player_past
         agent_pasts = feed_dict.agent_pasts
+        player_yaw = feed_dict.player_yaw
+        agent_yaws = feed_dict.agent_yaws
         player_future = observation.player_positions_world[1:self.T+1, :3] \
                 - carlautil.transform_to_location_ndarray(player_transform)
         agent_futures = observation.agent_positions_world[:, 1:self.T+1, :3] \
                 - carlautil.transform_to_location_ndarray(player_transform)
         sample_labels.n_present = observation.n_present
 
-        sample = DrivingSample(episode, frame, lidar_params,
-                sample_labels, save_directory,
-                make_sample_name(earlier_frame),
-                lidar_measurement, player_bbox, player_past,
-                agent_pasts,
-                player_future, agent_futures,
+        sample = DrivingSample(
+                episode=episode,
+                frame=frame,
+                lidar_params=lidar_params,
+                sample_labels=sample_labels,
+                save_directory=save_directory,
+                sample_name=make_sample_name(earlier_frame),
+                lidar_measurement=lidar_measurement,
+                player_bbox=player_bbox,
+                player_past=player_past,
+                agent_pasts=agent_pasts,
+                player_future=player_future,
+                agent_futures=agent_futures,
+                player_yaw=player_yaw,
+                agent_yaws=agent_yaws,
                 should_augment=self.should_augment,
                 n_augments=self.n_augments)
         sample.save()
