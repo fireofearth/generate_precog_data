@@ -1,5 +1,6 @@
 import logging
 import attrdict
+import math
 import numpy as np
 import scipy
 import pandas as pd
@@ -60,7 +61,7 @@ class PlayerObservation(object):
     @classu.member_initialize
     def __init__(self, frame, phi, world, other_vehicles,
             player_transforms, others_transforms, player_bbox,
-            other_id_ordering=None, radius=100):
+            other_id_ordering=None, radius=200):
         """
         1. generates a history of player and other vehicle position coordinates
            of size len(player_transforms)
@@ -200,7 +201,7 @@ class DrivingSample(object):
         #     self.lidar_points += np.random.uniform(
         #             -0.05, 0.05, size=self.lidar_points.shape)
 
-    def _save_sample(self, sample_name, lidar_points, player_past,
+    def __save_sample(self, sample_name, lidar_points, player_past,
             agent_pasts, player_future, agent_futures,
             player_yaw, agent_yaws):
         overhead_features = generate_overhead.build_BEV(
@@ -225,14 +226,40 @@ class DrivingSample(object):
         datum['labels'] = vars(self.sample_labels)
         util.save_datum(datum, self.save_directory, sample_name)
 
-    def _generate_augmentations(self):
+    def __save_orient_to_ego(self):
+        R = scipy.spatial.transform.Rotation
+
+        """Random rotation about origin."""
+        # why am I using revrotmat instead of rotmat
+        angle = math.radians(self.player_yaw)
+        rotmat = R.from_rotvec(np.array([0, 0, -1]) * angle).as_matrix()
+        revrotmat = R.from_rotvec(np.array([0, 0, 1]) * angle).as_matrix()
+        lidar_points = (revrotmat @ self.lidar_points.T).T
+        player_past = (rotmat @ self.player_past.T).T
+        n_oagents = self.agent_pasts.shape[0]
+        agent_pasts = np.reshape(self.agent_pasts, (-1, 3))
+        agent_pasts = (rotmat @ agent_pasts.T).T
+        agent_pasts = np.reshape(agent_pasts, (n_oagents, -1, 3))
+        player_future = (rotmat @ self.player_future.T).T
+        n_oagents = self.agent_futures.shape[0]
+        agent_futures = np.reshape(self.agent_futures, (-1, 3))
+        agent_futures = (rotmat @ agent_futures.T).T
+        agent_futures = np.reshape(agent_futures, (n_oagents, -1, 3))
+        player_yaw = (self.player_yaw - math.degrees(angle)) % 360.
+        agent_yaws = (self.agent_yaws - math.degrees(angle)) % 360.
+
+        self.__save_sample(self.sample_name, lidar_points, player_past,
+                agent_pasts, player_future, agent_futures,
+                player_yaw, agent_yaws)
+
+    def __generate_augmentations(self):
         R = scipy.spatial.transform.Rotation
         n_augments = np.random.randint(1, self.n_augments+1)
 
         for idx in range(n_augments):
             sample_name = f"{self.sample_name}_aug{idx}"
 
-            """Rotation about origin."""
+            """Random rotation about origin."""
             # why am I using revrotmat instead of rotmat
             angle = (np.random.sample()*2 - 1)*np.pi
             rotmat = R.from_rotvec(np.array([0, 0, -1]) * angle).as_matrix()
@@ -248,8 +275,8 @@ class DrivingSample(object):
             agent_futures = np.reshape(self.agent_futures, (-1, 3))
             agent_futures = (rotmat @ agent_futures.T).T
             agent_futures = np.reshape(agent_futures, (n_oagents, -1, 3))
-            player_yaw = self.player_yaw + angle
-            agent_yaws = self.agent_yaws + angle
+            player_yaw = (self.player_yaw + math.degrees(angle)) % 360.
+            agent_yaws = (self.agent_yaws + math.degrees(angle)) % 360.
 
             """Shift points about (x,y)-plane."""
             ## can't get this to work right now.
@@ -266,17 +293,18 @@ class DrivingSample(object):
             # player_future = player_future + shift
             # agent_futures = agent_futures + shift
 
-            self._save_sample(sample_name, lidar_points, player_past,
+            self.__save_sample(sample_name, lidar_points, player_past,
                     agent_pasts, player_future, agent_futures,
                     player_yaw, agent_yaws)
 
     def save(self):
         if self.should_augment:
-            self._generate_augmentations()
+            self.__generate_augmentations()
         else:
-            self._save_sample(self.sample_name, self.lidar_points, self.player_past,
-                    self.agent_pasts, self.player_future, self.agent_futures,
-                    self.player_yaw, self.agent_yaws)
+            self.__save_orient_to_ego()
+            # self.__save_sample(self.sample_name, self.lidar_points, self.player_past,
+            #         self.agent_pasts, self.player_future, self.agent_futures,
+            #         self.player_yaw, self.agent_yaws)
 
 
 class StreamingGenerator(object):
