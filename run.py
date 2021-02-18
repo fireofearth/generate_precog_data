@@ -88,6 +88,10 @@ class DataGenerator(object):
 
         blueprints = self.world.get_blueprint_library().filter('vehicle.*')
         blueprints = [x for x in blueprints if int(x.get_attribute('number_of_wheels')) == 4]
+        blueprints = [x for x in blueprints if not x.id.endswith('isetta')]
+        blueprints = [x for x in blueprints if not x.id.endswith('carlacola')]
+        blueprints = [x for x in blueprints if not x.id.endswith('cybertruck')]
+        blueprints = [x for x in blueprints if not x.id.endswith('t2')]
         blueprints = sorted(blueprints, key=lambda bp: bp.id)
 
         spawn_points = self.carla_map.get_spawn_points()

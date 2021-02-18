@@ -71,7 +71,8 @@ class SampleLabelMap(object):
     def __init__(self,
             intersection_type=ScenarioIntersectionLabel.NONE,
             slope_type=ScenarioSlopeLabel.NONE,
-            slope_pitch=0.0):
+            slope_pitch=0.0,
+            n_present="NONE"):
         pass
 
 class SampleLabelFilter(object):
@@ -173,6 +174,22 @@ def create_lidar_blueprint_v2(world):
     lidar_bp.set_attribute('lower_fov', '-30.0')
     return lidar_bp
 
+def create_semantic_lidar_blueprint(world):
+    """Construct a semantic LIDAR sensor blueprint.
+
+    Note: semantic LIDAR does not have dropoff or noise.
+    May have to mock this in the preprocessesing stage.
+    """
+    bp_library = world.get_blueprint_library()
+    lidar_bp = bp_library.find('sensor.lidar.ray_cast_semantic')
+    lidar_bp.set_attribute('channels', '32')
+    lidar_bp.set_attribute('range', '100')
+    lidar_bp.set_attribute('points_per_second', '100000')
+    lidar_bp.set_attribute('rotation_frequency', '10.0')
+    lidar_bp.set_attribute('upper_fov', '10.0')
+    lidar_bp.set_attribute('lower_fov', '-30.0')
+    return lidar_bp
+
 class IntersectionReader(object):
     """
     Used to keep track of properties in a map and used to query whether
@@ -261,13 +278,15 @@ class IntersectionReader(object):
         """Check wheter actor (i.e. vehicle) is near a slope,
         returning a ScenarioSlopeLabel.
 
-        TODO: make wp_locations array size smaller after debugging. Don't need to check non-sloped waypoints.
+        TODO: make wp_locations array size smaller after debugging.
+        Don't need to check non-sloped waypoints.
         """
         actor_location = carlautil.actor_to_location_ndarray(actor)
         actor_xy = actor_location[:2]
         actor_z = actor_location[-1]
+        """Want to ignore waypoints above and below (i.e. in the case actor is on a bridge)."""
         upperbound_z = actor.bounding_box.extent.z * 2
-        lowerbound_z = actor.bounding_box.extent.z - 1
+        lowerbound_z = -1
         xy_distances_to_wps = np.linalg.norm(
             self.wp_locations[:, :2] - actor_xy, axis=1)
         z_displacement_to_wps = self.wp_locations[:, -1] - actor_z
@@ -329,6 +348,20 @@ class IntersectionReader(object):
 class DataCollector(object):
     """Data collector based on DIM."""
 
+    def __create_lidar_sensor(self):
+        return self._world.spawn_actor(
+                create_lidar_blueprint_v2(self._world),
+                carla.Transform(carla.Location(z=2.5)),
+                attach_to=self._player,
+                attachment_type=carla.AttachmentType.Rigid)
+    
+    def __create_segmentation_lidar_sensor(self):
+        return self._world.spawn_actor(
+                create_semantic_lidar_blueprint(self._world),
+                carla.Transform(carla.Location(z=2.5)),
+                attach_to=self._player,
+                attachment_type=carla.AttachmentType.Rigid)
+
     def __init__(self, player_actor,
             intersection_reader,
             save_frequency=10,
@@ -341,8 +374,18 @@ class DataCollector(object):
             n_augments=1,
             debug=False):
         """
+        Parameters
+        ----------
         player_actor : carla.Vehicle
+            Vehicle that the data collector is following around, and should collect data for.
         intersection_reader : IntersectionReader
+            One IntersectionReader instance should be shared by all data collectors.
+        save_frequency : int
+            Frequency (wrt. to CARLA simulator frame) to save data.
+        n_burn_frames : int
+            The number of initial frames to skip before saving data.
+        episode : int
+            Index of current episode to collect data from.
         exclude_samples : SampleLabelFilter
             Filter to exclude saving samples by label.
         phi_attributes : attrdict.AttrDict
@@ -375,17 +418,16 @@ class DataCollector(object):
         self.others_transforms = collections.deque(
                 maxlen=self._trajectory_size)
         self.trajectory_feeds = collections.OrderedDict()
+        # lidar_feeds collections.OrderedDict
+        #     Where int key is frame index and value
+        #     is a carla.LidarMeasurement or carla.SemanticLidarMeasurement
         self.lidar_feeds = collections.OrderedDict()
-        # _n_feeds : int
+        # __n_feeds : int
         #     Size of trajectory/lidar feed dict
-        self._n_feeds = self.T + 1
+        self.__n_feeds = self.T + 1
         self.streaming_generator = generate_observation.StreamingGenerator(
                 self._phi, should_augment=should_augment, n_augments=n_augments)
-        self.sensor = self._world.spawn_actor(
-                create_lidar_blueprint_v2(self._world),
-                carla.Transform(carla.Location(z=2.5)),
-                attach_to=self._player,
-                attachment_type=carla.AttachmentType.Rigid)
+        self.sensor = self.__create_segmentation_lidar_sensor()
         self._first_frame = None
     
     def start_sensor(self):
@@ -517,7 +559,8 @@ class DataCollector(object):
             least T_past number of player and other vehicle transforms."""
             observation = generate_observation.PlayerObservation(
                     frame, self._phi, self._world, self._other_vehicles,
-                    self.player_transforms, self.others_transforms)
+                    self.player_transforms, self.others_transforms,
+                    self._player.bounding_box)
             self.streaming_generator.add_feed(
                     frame, observation, self.trajectory_feeds)
             
@@ -534,7 +577,7 @@ class DataCollector(object):
                             self._save_directory, self._make_sample_name,
                             sample_labels)
         
-        if len(self.trajectory_feeds) > self._n_feeds:
+        if len(self.trajectory_feeds) > self.__n_feeds:
             """Remove older frames.
             (frame, feed) is removed in LIFO order."""
             frame, feed = self.trajectory_feeds.popitem(last=False)
@@ -547,42 +590,3 @@ class DataCollector(object):
             return
         logging.debug(f"in LidarManager._parse_image() player = {self._player.id} frame = {image.frame}")
         self.lidar_feeds[image.frame] = image
-
-# Y_INTERSECTION = 'Y_INTERSECTION'
-# X_INTERSECTION = 'X_INTERSECTION'
-# T_INTERSECTION = 'T_INTERSECTION'
-# TOWN_03_UNCONTROLLED_SPAWN_POINTS = {
-#     T_INTERSECTION: {
-#         # top-right
-#         1: set([
-#             82, 111, 150, 145,
-#         ]),
-#         # top-right
-#         2: set([
-#             54, 182, 217,
-#         ]),
-#         # right
-#         3: set([
-#             21, 22, 23, 24,
-#         ]),
-#         # bottom-right
-#         4: set([
-#             87, 89, 201, 224
-#         ])
-#     }
-#     Y_INTERSECTION: {
-#         # bottom left
-#         1: set([
-#             86, 90, 91 173, 198,
-#         ]),
-#     }
-#     X_INTERSECTION: {
-#         # top left
-#         2: set([
-#             56, 57, 241,
-#         ])
-#     }
-# }
-# UNCONTROLLED_SPAWN_POINTS = {
-#     'Town03': TOWN_03_UNCONTROLLED_SPAWN_POINTS,
-# }

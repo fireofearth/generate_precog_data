@@ -1,5 +1,5 @@
 #!/bin/bash
 
+    # --augment-data \
 python run.py \
-    --augment-data \
     -v

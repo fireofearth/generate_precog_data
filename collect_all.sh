@@ -10,4 +10,4 @@ sleep 3
 sleep 3
 . collect_town07.sh
 sleep 3
-. collect_town010.sh
+. collect_town10.sh
