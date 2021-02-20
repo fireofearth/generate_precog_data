@@ -31,7 +31,8 @@ import hashlib
 import networkx as nx
 import numpy as np
 
-import generate.util as util
+import utility as util
+import carlautil
 
 try:
     import pygame
@@ -787,13 +788,13 @@ class MapImage(object):
             # using proximity to traffic light
             tlights = util.filter_to_list(lambda a: 'traffic_light' in a.type_id,
                     carla_world.get_actors())
-            junctions = util.get_junctions_from_topology_graph(G)
+            junctions = carlautil.get_junctions_from_topology_graph(G)
 
             tlight_distances = np.zeros((len(tlights), len(junctions),))
-            f = lambda j: util.location_to_ndarray(j.bounding_box.location)
+            f = lambda j: carlautil.location_to_ndarray(j.bounding_box.location)
             junction_locations = util.map_to_ndarray(f, junctions)
             
-            f = lambda tl: util.transform_to_location_ndarray(
+            f = lambda tl: carlautil.transform_to_location_ndarray(
                     tl.get_transform())
             tlight_locations = util.map_to_ndarray(f, tlights)
 
