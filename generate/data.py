@@ -2,6 +2,8 @@
 """
 
 import collections
+import abc
+from abc import ABC, abstractmethod
 import weakref
 import logging
 import attrdict
@@ -14,6 +16,7 @@ import generate.overhead as generate_overhead
 import generate.observation as generate_observation
 import utility as util
 import carlautil
+import carlautil.debug
 import precog.utils.class_util as classu
 import precog.utils.tensor_util as tensoru
 
@@ -64,6 +67,17 @@ class ScenarioSlopeLabel(object):
     #     Vehicle is close or on a sloped road
     SLOPES = 'SLOPES'
 
+class BoundingRegionLabel(object):
+    """Labels samples whether they are inside a bounding region.
+    Use this to select cars on (a) specific lane(s), intersection(s)"""
+
+    # NONE : str
+    #     Vehicle is not inside any bounding region
+    NONE = 'NONE'
+    # BOUNDED : str
+    #     Vehicle is inside a bounding region
+    BOUNDED = 'BOUNDED'
+
 class SampleLabelMap(object):
     """Container of sample labels, categorized by different types."""
     
@@ -71,6 +85,7 @@ class SampleLabelMap(object):
     def __init__(self,
             intersection_type=ScenarioIntersectionLabel.NONE,
             slope_type=ScenarioSlopeLabel.NONE,
+            bounding_type=BoundingRegionLabel.NONE,
             slope_pitch=0.0,
             n_present="NONE"):
         pass
@@ -81,7 +96,8 @@ class SampleLabelFilter(object):
     @classu.member_initialize
     def __init__(self,
             intersection_type=[],
-            slope_type=[]):
+            slope_type=[],
+            bounding_type=[]):
         """
         Parameters
         ----------
@@ -190,10 +206,69 @@ def create_semantic_lidar_blueprint(world):
     lidar_bp.set_attribute('lower_fov', '-30.0')
     return lidar_bp
 
-class IntersectionReader(object):
-    """
-    Used to keep track of properties in a map and used to query whether
-    an actor is in a certain part (i.e. intersection, hill) of the map.
+class MapQuerier(ABC):
+    """Abstract class to keep track of properties in a map and
+    used to query whether an actor is in a certain part
+    (i.e. intersection, hill) of the map for the sake of
+    labeling samples."""
+
+    def __init__(self, carla_world, carla_map, debug=False):
+        self.carla_world = carla_world
+        self.carla_map = carla_map
+        self._debug = debug
+
+    @property
+    def map_name(self):
+        return self.carla_map.name
+
+    def debug_display(self):
+        pass
+
+    def at_intersection_to_label(self, actor):
+        """Retrieve the label corresponding to the actor's location in the
+        map based on proximity to intersections."""
+        return ScenarioIntersectionLabel.NONE
+
+    def at_slope_to_label(self, actor):
+        """Check wheter actor (i.e. vehicle) is near a slope,
+        returning a ScenarioSlopeLabel."""
+        return ScenarioSlopeLabel.NONE, 0
+
+    def at_bounding_box_to_label(self, actor):
+        """Check whether actor (i.e. vehicle) is inside a bounding region."""
+        return BoundingRegionLabel.NONE
+
+
+class Map10HDBoundTIntersectionReader(MapQuerier):
+    """Label samples in Map10HD that are in specific
+    T-intersection."""
+
+    REGION_RADIUS = 18
+    CENTER_COORDS = np.array([42.595, 65.077, 0.0])
+
+    def __init__(self, carla_world, carla_map, debug=False):
+        """
+        """
+        super().__init__(carla_world, carla_map, debug=debug)
+
+    def debug_display(self):
+        display_time = 40.0
+        x, y, z = self.CENTER_COORDS
+        carlautil.debug.show_square(self.carla_world, x, y, z,
+                self.REGION_RADIUS, t=display_time)
+
+    def at_bounding_box_to_label(self, actor):
+        actor_location = carlautil.actor_to_location_ndarray(actor)
+        dist = np.linalg.norm(self.CENTER_COORDS - actor_location)
+        if dist < self.REGION_RADIUS:
+            return BoundingRegionLabel.BOUNDED
+        else:
+            return BoundingRegionLabel.NONE
+
+
+class IntersectionReader(MapQuerier):
+    """Used to query whether actor is on an intersection and a hill on the map.
+
     Note: bad naming. Class should be named MapReader or something more general.
     """
 
@@ -208,10 +283,15 @@ class IntersectionReader(object):
 
     def __init__(self, carla_world, carla_map, debug=False):
         """
+
+        Parameters
+        ----------
+        carla_world : carla.World
+        carla_map : carla.Map
+        debug : bool
+
         """
-        self.carla_world = carla_world
-        self.carla_map = carla_map
-        self._debug = debug
+        super().__init__(carla_world, carla_map, debug=debug)
         """Generate slope topology of the map"""
         # get waypoints
         wps = self.carla_map.generate_waypoints(4.0)
@@ -254,12 +334,8 @@ class IntersectionReader(object):
                 = junction_locations[is_controlled_junction]
         self.uncontrolled_junction_locations \
                 = junction_locations[is_uncontrolled_junction]
-    
-    @property
-    def map_name(self):
-        return self.carla_map.name
 
-    def debug_display_intersections(self):
+    def debug_display(self):
         display_time = 40.0
         for loc in self.controlled_junction_locations:
             self.carla_world.debug.draw_string(
@@ -495,9 +571,12 @@ class DataCollector(object):
                 .at_intersection_to_label(self._player)
         slope_type_label, slope_pitch = self._intersection_reader \
                 .at_slope_to_label(self._player)
+        bounding_type_label = self._intersection_reader \
+                .at_bounding_box_to_label(self._player)
         return SampleLabelMap(
                 intersection_type=intersection_type_label,
                 slope_type=slope_type_label,
+                bounding_type=bounding_type_label,
                 slope_pitch=slope_pitch)
 
     def debug_draw_red_player_bbox(self):

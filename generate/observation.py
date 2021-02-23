@@ -135,7 +135,8 @@ class PlayerObservation(object):
             self.has_other_agents = False
 
         if self.n_missing > 0:
-            faraway_position = carlautil.transform_to_location_ndarray(self.player_transform) + 500
+            faraway_position = carlautil.transform_to_location_ndarray(self.player_transform) \
+                    + np.array([0, 300, 0])
             faraway_tile = np.tile(
                     faraway_position, (self.n_missing, len(self.others_transforms), 1))
             if self.n_missing == self.A - 1:

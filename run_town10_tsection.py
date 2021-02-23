@@ -29,8 +29,8 @@ SetVehicleLightState = carla.command.SetVehicleLightState
 FutureActor = carla.command.FutureActor
 
 from generate.data import (
-        DataCollector, IntersectionReader, SampleLabelFilter,
-        ScenarioIntersectionLabel, ScenarioSlopeLabel)
+        DataCollector, Map10HDBoundTIntersectionReader, SampleLabelFilter,
+        ScenarioIntersectionLabel, ScenarioSlopeLabel, BoundingRegionLabel)
 
 class DataGenerator(object):
 
@@ -53,21 +53,20 @@ class DataGenerator(object):
 
         self.client = carla.Client(self.args.host, self.args.port)
         self.client.set_timeout(10.0)
-        if self.args.map is None:
-            self.world = self.client.get_world()
-            logging.info(f"Using the current map.")
-        else:
-            logging.info(f"Using the map {self.args.map}.")
-            self.world = self.client.load_world(self.args.map)
+        self.world = self.client.get_world()
         self.carla_map = self.world.get_map()
+        if self.carla_map.name != "Town10HD":
+            self.world = self.client.load_world("Town10HD")
+            self.carla_map = self.world.get_map()
         self.traffic_manager = self.client.get_trafficmanager(8000)        
-        self.intersection_reader = IntersectionReader(
+        self.intersection_reader = Map10HDBoundTIntersectionReader(
                 self.world, self.carla_map, debug=self.args.debug)
         
         # filtering out controlled intersections
         self.exclude_filter = SampleLabelFilter(
                 intersection_type=[ScenarioIntersectionLabel.CONTROLLED],
-                slope_type=[ScenarioSlopeLabel.SLOPES])
+                slope_type=[ScenarioSlopeLabel.SLOPES],
+                bounding_type=[BoundingRegionLabel.NONE])
 
     def _setup_actors(self, episode):
         """Setup vehicles and data collectors for an episode.
@@ -147,8 +146,8 @@ class DataGenerator(object):
                     self.intersection_reader,
                     save_directory=self.args.save_directory,
                     n_burn_frames=self.args.n_burn_frames,
-                    exclude_samples=self.exclude_filter,
                     episode=episode,
+                    exclude_samples=self.exclude_filter,
                     should_augment=self.args.augment,
                     n_augments=self.args.n_augments,
                     debug=self.args.debug)
@@ -267,19 +266,15 @@ def main():
         default=None,
         type=int)
     argparser.add_argument(
-        '--map',
-        type=str,
-        help="Set the CARLA map to collect data from.")
-    argparser.add_argument(
         '-e', '--n-episodes',
         metavar='E',
-        default=11,
+        default=20,
         type=int,
         help='Number of episodes to run (default: 10)')
     argparser.add_argument(
         '-f', '--n-frames',
         metavar='F',
-        default=1000,
+        default=600,
         type=int,
         help='Number of frames in each episode to capture (default: 1000)')
     argparser.add_argument(
@@ -291,13 +286,13 @@ def main():
     argparser.add_argument(
         '-n', '--n-vehicles',
         metavar='N',
-        default=80,
+        default=50,
         type=int,
         help='number of vehicles (default: 80)')
     argparser.add_argument(
         '-d', '--n-data-collectors',
         metavar='D',
-        default=20,
+        default=30,
         type=int,
         help='number of data collectos to add on vehicles (default: 20)')
     argparser.add_argument(

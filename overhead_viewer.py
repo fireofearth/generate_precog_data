@@ -833,6 +833,7 @@ class MapImage(object):
                 draw_point(map_surface, pt, color=COLOR_SCARLET_RED_0)
             for loc in uncontrolled_junction_locations:
                 pt = carla.Location(loc[0], loc[1], loc[2])
+                logging.info(f"uncontrolled intersection at: " + repr((loc[0], loc[1], loc[2])))
                 draw_circle(map_surface, pt,
                         world_to_pixel_width(DETECT_RADIUS),
                         color=COLOR_CHAMELEON_0)

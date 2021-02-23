@@ -6,7 +6,11 @@
 # This work is licensed under the terms of the MIT license.
 # For a copy, see <https://opensource.org/licenses/MIT>.
 
-"""Example of automatic vehicle control from client side."""
+"""
+
+DEPRECATED
+
+"""
 
 from __future__ import print_function
 

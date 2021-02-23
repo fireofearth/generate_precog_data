@@ -29,8 +29,8 @@ SetVehicleLightState = carla.command.SetVehicleLightState
 FutureActor = carla.command.FutureActor
 
 from generate.data import (
-        DataCollector, IntersectionReader, SampleLabelFilter,
-        ScenarioIntersectionLabel, ScenarioSlopeLabel)
+        DataCollector, Map10HDBoundTIntersectionReader, SampleLabelFilter,
+        ScenarioIntersectionLabel, ScenarioSlopeLabel, BoundingRegionLabel)
 
 class DataGenerator(object):
 
@@ -42,7 +42,13 @@ class DataGenerator(object):
         # n_frames : int
         #     Number of frames to collect data in each episode.
         #     Note: a vehicle takes roughly 130 frames to make a turn.
-        self.n_frames = self.args.n_frames
+        self.n_frames = 200
+        # n_burn_frames : int
+        #     The number of initial frames to skip before saving data.
+        self.n_burn_frames = 0
+        # save_frequency : int
+        #     Size of interval in frames to wait between saving.
+        self.save_frequency = 5
         # delta : float
         #     Step size for synchronous mode.
         self.delta = 0.1
@@ -53,24 +59,32 @@ class DataGenerator(object):
 
         self.client = carla.Client(self.args.host, self.args.port)
         self.client.set_timeout(10.0)
-        if self.args.map is None:
-            self.world = self.client.get_world()
-            logging.info(f"Using the current map.")
-        else:
-            logging.info(f"Using the map {self.args.map}.")
-            self.world = self.client.load_world(self.args.map)
+        self.world = self.client.get_world()
         self.carla_map = self.world.get_map()
+        if self.carla_map.name != "Town10HD":
+            self.world = self.client.load_world("Town10HD")
+            self.carla_map = self.world.get_map()
         self.traffic_manager = self.client.get_trafficmanager(8000)        
-        self.intersection_reader = IntersectionReader(
+        self.intersection_reader = Map10HDBoundTIntersectionReader(
                 self.world, self.carla_map, debug=self.args.debug)
         
         # filtering out controlled intersections
-        self.exclude_filter = SampleLabelFilter(
-                intersection_type=[ScenarioIntersectionLabel.CONTROLLED],
-                slope_type=[ScenarioSlopeLabel.SLOPES])
+        self.exclude_filter = SampleLabelFilter()
 
-    def _setup_actors(self, episode):
+    def __setup_vehicle(self, blueprint, spawn_point_indices, spawn_points):
+        if blueprint.has_attribute('color'):
+            color = np.random.choice(blueprint.get_attribute('color').recommended_values)
+            blueprint.set_attribute('color', color)
+        if blueprint.has_attribute('driver_id'):
+            driver_id = np.random.choice(blueprint.get_attribute('driver_id').recommended_values)
+            blueprint.set_attribute('driver_id', driver_id)
+        blueprint.set_attribute('role_name', 'autopilot')
+        transform = spawn_points[random.choice(spawn_point_indices)]
+        return self.world.spawn_actor(blueprint, transform)
+
+    def __setup_actors(self, episode):
         """Setup vehicles and data collectors for an episode.
+        INVARIANT: CARLA world has already been set to synchronous mode.
 
         Parameters
         ----------
@@ -83,83 +97,50 @@ class DataGenerator(object):
         list of DataCollector
             Data collectors with set up done and listening to LIDAR.
         """
-        vehicle_ids = []
-        data_collectors = []
-
-        blueprints = self.world.get_blueprint_library().filter('vehicle.*')
-        blueprints = [x for x in blueprints if int(x.get_attribute('number_of_wheels')) == 4]
-        blueprints = [x for x in blueprints if not x.id.endswith('isetta')]
-        blueprints = [x for x in blueprints if not x.id.endswith('carlacola')]
-        blueprints = [x for x in blueprints if not x.id.endswith('cybertruck')]
-        blueprints = [x for x in blueprints if not x.id.endswith('t2')]
-        blueprints = sorted(blueprints, key=lambda bp: bp.id)
+        ego_vehicle_blueprint = self.world.get_blueprint_library().find("vehicle.audi.a2")
+        other_vehicle_blueprint = self.world.get_blueprint_library().find("vehicle.audi.etron")
 
         spawn_points = self.carla_map.get_spawn_points()
-        number_of_spawn_points = len(spawn_points)
-        logging.info(f"Using {self.args.n_vehicles} out of "
-                f"{number_of_spawn_points} spawn points")
+        # spawn point indices sorted from closest to intersection 
+        ego_vehicle_spawn_point_idx = [30, 29, 28]
+        other_vehicle_spawn_point_idx = [36, 35]
+        # specify spawn points
+        # ego_vehicle_spawn_point_idx = [152]
+        # other_vehicle_spawn_point_idx = [28]
 
-        if self.args.n_vehicles < number_of_spawn_points:
-            np.random.shuffle(spawn_points)
-        elif self.args.n_vehicles > number_of_spawn_points:
-            msg = 'requested %d vehicles, but could only find %d spawn points'
-            logging.warning(msg, self.args.n_vehicles, number_of_spawn_points)
-            self.args.n_vehicles = number_of_spawn_points
+        """Set the vehicles."""
+        ego_vehicle = self.__setup_vehicle(
+                ego_vehicle_blueprint,
+                ego_vehicle_spawn_point_idx,
+                spawn_points)
+        other_vehicle = self.__setup_vehicle(
+                other_vehicle_blueprint,
+                other_vehicle_spawn_point_idx,
+                spawn_points)
+        ego_vehicle.set_autopilot(True, self.traffic_manager.get_port())
+        other_vehicle.set_autopilot(True, self.traffic_manager.get_port())
+        self.world.tick()
+        vehicle_ids = [ego_vehicle.id, other_vehicle.id]
 
-        # Generate vehicles
-        batch = []
-        for n, transform in enumerate(spawn_points):
-            if n >= self.args.n_vehicles:
-                break
-            blueprint = np.random.choice(blueprints)
-            if blueprint.has_attribute('color'):
-                color = np.random.choice(blueprint.get_attribute('color').recommended_values)
-                blueprint.set_attribute('color', color)
-            if blueprint.has_attribute('driver_id'):
-                driver_id = np.random.choice(blueprint.get_attribute('driver_id').recommended_values)
-                blueprint.set_attribute('driver_id', driver_id)
-            blueprint.set_attribute('role_name', 'autopilot')
-
-            # prepare the light state of the cars to spawn
-            light_state = vls.NONE
-            if self.args.car_lights_on:
-                light_state = vls.Position | vls.LowBeam | vls.LowBeam
-
-            # spawn the cars and set their autopilot and light state all together
-            batch.append(SpawnActor(blueprint, transform)
-                .then(SetAutopilot(FutureActor, True, self.traffic_manager.get_port()))
-                .then(SetVehicleLightState(FutureActor, light_state)))
-
-        # Wait for vehicles to finish generating
-        for response in self.client.apply_batch_sync(batch, True):
-            if response.error:
-                logging.error(response.error)
-            else:
-                vehicle_ids.append(response.actor_id)
-        
-        # Add data collector to a handful of vehicles
-        vehicles_ids_to_data_collect = vehicle_ids[
-                :self.args.n_data_collectors]
-        for idx, vehicle_id in enumerate(vehicles_ids_to_data_collect):
-            vehicle_ids_to_watch = vehicle_ids[:idx] + vehicle_ids[idx + 1:]
-            vehicle = self.world.get_actor(vehicle_id)
-            data_collector = DataCollector(vehicle,
-                    self.intersection_reader,
-                    save_directory=self.args.save_directory,
-                    n_burn_frames=self.args.n_burn_frames,
-                    exclude_samples=self.exclude_filter,
-                    episode=episode,
-                    should_augment=self.args.augment,
-                    n_augments=self.args.n_augments,
-                    debug=self.args.debug)
-            data_collector.start_sensor()
-            data_collector.set_vehicles(vehicle_ids_to_watch)
-            data_collectors.append(data_collector)
+        """Set the data collector."""
+        data_collector = DataCollector(ego_vehicle,
+                self.intersection_reader,
+                save_frequency=self.save_frequency,
+                save_directory=self.args.save_directory,
+                n_burn_frames=self.n_burn_frames,
+                episode=episode,
+                exclude_samples=self.exclude_filter,
+                should_augment=self.args.augment,
+                n_augments=self.args.n_augments,
+                debug=self.args.debug)
+        data_collector.start_sensor()
+        data_collector.set_vehicles([other_vehicle.id])
+        data_collectors = [data_collector]
 
         logging.info(f"spawned {len(vehicle_ids)} vehicles")
         return vehicle_ids, data_collectors
     
-    def _run_episode(self, episode):
+    def __run_episode(self, episode):
         """Run a dataset collection episode.
         
         Parameters
@@ -172,7 +153,7 @@ class DataGenerator(object):
 
         try:
             logging.info("Create vehicles and data collectors.")
-            vehicle_ids, data_collectors = self._setup_actors(episode)
+            vehicle_ids, data_collectors = self.__setup_actors(episode)
             logging.info("Running simulation.")
             for idx in range(self.n_frames):
                 frame = self.world.tick()
@@ -205,8 +186,11 @@ class DataGenerator(object):
             self.traffic_manager.set_synchronous_mode(True)
             self.traffic_manager.set_global_distance_to_leading_vehicle(1.0)
             self.traffic_manager.global_percentage_speed_difference(0.0)
-            if self.args.seed is not None:
-                self.traffic_manager.set_random_device_seed(self.args.seed)        
+            if self.args.seed is None:
+                self.traffic_manager.set_random_device_seed(
+                        random.randint(0, 99999))
+            else:
+                self.traffic_manager.set_random_device_seed(self.args.seed)
             if self.args.hybrid:
                 self.traffic_manager.set_hybrid_physics_mode(True)
             self.world.apply_settings(settings)
@@ -215,7 +199,7 @@ class DataGenerator(object):
 
             for episode in range(self.n_episodes):
                 logging.info(f"Running episode {episode}.")
-                self._run_episode(episode)
+                self.__run_episode(episode)
 
         finally:
             logging.info("Reverting to original settings.")
@@ -267,39 +251,11 @@ def main():
         default=None,
         type=int)
     argparser.add_argument(
-        '--map',
-        type=str,
-        help="Set the CARLA map to collect data from.")
-    argparser.add_argument(
         '-e', '--n-episodes',
         metavar='E',
-        default=11,
-        type=int,
-        help='Number of episodes to run (default: 10)')
-    argparser.add_argument(
-        '-f', '--n-frames',
-        metavar='F',
-        default=1000,
-        type=int,
-        help='Number of frames in each episode to capture (default: 1000)')
-    argparser.add_argument(
-        '-b', '--n-burn-frames',
-        metavar='B',
-        default=60,
-        type=int,
-        help="Number of frames at the beginning of each episode to skip data collection (default: 60)")
-    argparser.add_argument(
-        '-n', '--n-vehicles',
-        metavar='N',
-        default=80,
-        type=int,
-        help='number of vehicles (default: 80)')
-    argparser.add_argument(
-        '-d', '--n-data-collectors',
-        metavar='D',
         default=20,
         type=int,
-        help='number of data collectos to add on vehicles (default: 20)')
+        help='Number of episodes to run (default: 10)')
     argparser.add_argument(
         '--augment-data',
         action='store_true',
@@ -315,10 +271,6 @@ def main():
         '--hybrid',
         action='store_true',
         help='Enanble')
-    argparser.add_argument(
-        '--car-lights-on',
-        action='store_true',
-        help='Enable car lights')
 
     args = argparser.parse_args()
     log_level = logging.DEBUG if args.debug else logging.INFO
