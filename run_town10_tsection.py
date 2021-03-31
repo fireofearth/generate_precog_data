@@ -45,7 +45,14 @@ class DataGenerator(object):
         self.n_frames = self.args.n_frames
         # delta : float
         #     Step size for synchronous mode.
-        self.delta = 0.1
+        #     Note: setting step size to t=0.2 corresponds to frequence 5HZ
+        #     And 4 seconds of future positions when using ESP parameter T=20
+        self.delta = 0.2
+        # max_substep_delta_time : float
+        # max_substeps : int
+        #     Set these such that delta <= max_substep_delta_time * max_substeps
+        self.max_substep_delta_time = 0.013
+        self.max_substeps = 16
         if self.args.seed is None:
             np.random.seed(int(time.time()))
         else:
@@ -144,6 +151,7 @@ class DataGenerator(object):
             vehicle = self.world.get_actor(vehicle_id)
             data_collector = DataCollector(vehicle,
                     self.intersection_reader,
+                    save_frequency=self.args.save_frequency,
                     save_directory=self.args.save_directory,
                     n_burn_frames=self.args.n_burn_frames,
                     episode=episode,
@@ -193,11 +201,16 @@ class DataGenerator(object):
     def run(self):
         """Main entry point to data collection."""
         original_settings = None
-        
+
+        logging.info("Using these arguments:")
+        print(self.args)
+
         try:
             logging.info("Enabling synchronous setting and updating traffic manager.")
             original_settings = self.world.get_settings()
             settings = self.world.get_settings()
+            settings.max_substep_delta_time = self.max_substep_delta_time
+            settings.max_substeps = self.max_substeps
             settings.fixed_delta_seconds = self.delta
             settings.synchronous_mode = True
 
@@ -274,21 +287,27 @@ def main():
     argparser.add_argument(
         '-f', '--n-frames',
         metavar='F',
-        default=600,
+        default=300,
         type=int,
-        help='Number of frames in each episode to capture (default: 1000)')
+        help='Number of frames in each episode to capture (default: 300)')
     argparser.add_argument(
         '-b', '--n-burn-frames',
         metavar='B',
-        default=60,
+        default=30,
         type=int,
         help="Number of frames at the beginning of each episode to skip data collection (default: 60)")
     argparser.add_argument(
+        '--save-frequency',
+        metavar='B',
+        default=5,
+        type=int,
+        help="Size of interval in frames to wait between saving (default: 5)")
+    argparser.add_argument(
         '-n', '--n-vehicles',
         metavar='N',
-        default=50,
+        default=30,
         type=int,
-        help='number of vehicles (default: 80)')
+        help='number of vehicles (default: 30)')
     argparser.add_argument(
         '-d', '--n-data-collectors',
         metavar='D',

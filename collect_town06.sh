@@ -1,10 +1,10 @@
 #!/bin/bash
 
 # twice as many episodes for half the time
-SAVEDIR=/media/external/data/precog_generate/datasets/20210201
+SAVEDIR=/home/fireofearth/data/precog_generate/datasets/20210329
+    # --augment-data \
 python run.py \
     --dir $SAVEDIR \
-    --augment-data \
     --n-vehicles 130 \
     --n-episodes 20 \
     --n-frames 560 \

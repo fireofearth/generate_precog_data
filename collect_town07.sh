@@ -1,9 +1,9 @@
 #!/bin/bash
 
-SAVEDIR=/media/external/data/precog_generate/datasets/20210201
+SAVEDIR=/home/fireofearth/data/precog_generate/datasets/20210329
+    # --augment-data \
 python run.py \
     --dir $SAVEDIR \
-    --augment-data \
     --n-vehicles 50 \
     --n-frames 1000 \
     --n-burn-frames 60 \

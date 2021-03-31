@@ -51,7 +51,9 @@ class DataGenerator(object):
         self.save_frequency = 5
         # delta : float
         #     Step size for synchronous mode.
-        self.delta = 0.1
+        #     Note: setting step size to t=0.2 corresponds to frequence 5HZ
+        #     And 4 seconds of future positions when using ESP parameter T=20
+        self.delta = 0.2
         if self.args.seed is None:
             np.random.seed(int(time.time()))
         else:
@@ -180,6 +182,8 @@ class DataGenerator(object):
             logging.info("Enabling synchronous setting and updating traffic manager.")
             original_settings = self.world.get_settings()
             settings = self.world.get_settings()
+            settings.max_substep_delta_time = self.max_substep_delta_time
+            settings.max_substeps = self.max_substeps
             settings.fixed_delta_seconds = self.delta
             settings.synchronous_mode = True
 
