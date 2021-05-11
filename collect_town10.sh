@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SAVEDIR=/home/fireofearth/data/precog_generate/datasets/20210329
+SAVEDIR=/home/fireofearth/data/precog_generate/datasets/20210401
     # --augment-data \
 python run.py \
     --dir $SAVEDIR \

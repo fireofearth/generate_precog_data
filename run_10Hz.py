@@ -47,12 +47,12 @@ class DataGenerator(object):
         #     Step size for synchronous mode.
         #     Note: setting step size to t=0.2 corresponds to frequence 5HZ
         #     And 4 seconds of future positions when using ESP parameter T=20
-        self.delta = 0.2
+        self.delta = 0.1
         # max_substep_delta_time : float
         # max_substeps : int
         #     Set these such that delta <= max_substep_delta_time * max_substeps
-        self.max_substep_delta_time = 0.013
-        self.max_substeps = 16
+        # self.max_substep_delta_time = 0.013
+        # self.max_substeps = 16
         if self.args.seed is None:
             np.random.seed(int(time.time()))
         else:
@@ -206,14 +206,14 @@ class DataGenerator(object):
             logging.info("Enabling synchronous setting and updating traffic manager.")
             original_settings = self.world.get_settings()
             settings = self.world.get_settings()
-            settings.max_substep_delta_time = self.max_substep_delta_time
-            settings.max_substeps = self.max_substeps
+            # settings.max_substep_delta_time = self.max_substep_delta_time
+            # settings.max_substeps = self.max_substeps
             settings.fixed_delta_seconds = self.delta
             settings.synchronous_mode = True
 
             self.traffic_manager.set_synchronous_mode(True)
             self.traffic_manager.set_global_distance_to_leading_vehicle(1.0)
-            self.traffic_manager.global_percentage_speed_difference(50.0)
+            self.traffic_manager.global_percentage_speed_difference(0.0)
             if self.args.seed is not None:
                 self.traffic_manager.set_random_device_seed(self.args.seed)        
             if self.args.hybrid:
